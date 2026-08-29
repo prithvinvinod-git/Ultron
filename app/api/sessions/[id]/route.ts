@@ -1,6 +1,4 @@
-import { asc, eq } from "drizzle-orm";
-import { messages, sessions } from "@/db/schema";
-import { getDb } from "@/db/client";
+import { getStore } from "@/db/store";
 import { jsonError } from "@/lib/http";
 
 export const runtime = "nodejs";
@@ -11,32 +9,26 @@ export async function GET(
   ctx: RouteContext<"/api/sessions/[id]">,
 ) {
   const { id } = await ctx.params;
-  const db = getDb();
+  const store = await getStore();
 
-  const session = await db
-    .select()
-    .from(sessions)
-    .where(eq(sessions.id, id))
-    .limit(1);
-  if (!session.length) return jsonError(404, "Session not found.");
+  const session = await store.getSession(id);
+  if (!session) return jsonError(404, "Session not found.");
 
-  const rows = await db
-    .select()
-    .from(messages)
-    .where(eq(messages.sessionId, id))
-    .orderBy(asc(messages.createdAt));
+  const rows = await store.listMessages(id);
 
-  const transcript = rows.map((m) => {
-    if (m.role === "user" || m.role === "assistant") {
-      return { role: m.role, content: m.content ?? "" };
-    }
-    return null;
-  });
+  const transcript = rows
+    .map((m) => {
+      if (m.role === "user" || m.role === "assistant") {
+        return { role: m.role, content: m.content ?? "" };
+      }
+      return null;
+    })
+    .filter((m): m is { role: string; content: string } => m !== null);
 
   return Response.json({
     ok: true,
-    session: session[0],
-    messages: transcript.filter(Boolean),
+    session,
+    messages: transcript,
   });
 }
 
@@ -45,7 +37,6 @@ export async function DELETE(
   ctx: RouteContext<"/api/sessions/[id]">,
 ) {
   const { id } = await ctx.params;
-  const db = getDb();
-  await db.delete(sessions).where(eq(sessions.id, id));
+  await (await getStore()).deleteSession(id);
   return Response.json({ ok: true });
 }

@@ -1,10 +1,9 @@
 import "server-only";
-import { asc } from "drizzle-orm";
-import { providers } from "@/db/schema";
-import { db } from "@/db/client";
+import { getStore } from "@/db/store";
 import type { Provider } from "@/ai/providers/types";
 import { createGeminiProvider } from "@/ai/providers/gemini";
 import { createGrokProvider } from "@/ai/providers/grok";
+import { createOpenRouterProvider } from "@/ai/providers/openrouter";
 
 export interface ProviderStatus {
   name: string;
@@ -25,23 +24,26 @@ function registry(): Record<string, () => Provider> {
   const map: Record<string, () => Provider> = {};
   if (process.env.GEMINI_API_KEY) map.gemini = createGeminiProvider;
   if (process.env.XAI_API_KEY) map.xai = createGrokProvider;
+  if (process.env.OPENROUTER_API_KEY) map.openrouter = createOpenRouterProvider;
   return map;
 }
 
 const MODEL_BY_NAME: Record<string, string> = {
   gemini: process.env.GEMINI_MODEL ?? "gemini-3.6-flash",
-  xai: process.env.XAI_MODEL ?? "grok-4-6",
+  xai: process.env.XAI_MODEL ?? "grok-4.6",
+  openrouter: process.env.OPENROUTER_MODEL ?? "nvidia/nemotron-3-super-120b-a12b:free",
 };
 
 const DOCS_BY_NAME: Record<string, string> = {
   gemini: "https://ai.google.dev/gemini-api/docs/openai",
   xai: "https://docs.x.ai/docs/overview",
+  openrouter: "https://openrouter.ai/docs",
 };
 
 /** Active + configured providers in DB priority order (used by the agent). */
 export async function getConfiguredProviders(): Promise<Provider[]> {
   const builders = registry();
-  const rows = await db.select().from(providers).orderBy(asc(providers.priority));
+  const rows = await (await getStore()).listProviders();
   const list: Provider[] = [];
   for (const row of rows) {
     const build = builders[row.key];
@@ -54,7 +56,7 @@ export async function getConfiguredProviders(): Promise<Provider[]> {
 /** Status for the /system view: everything we know about, configured or not. */
 export async function getProviderStatus(): Promise<ProviderStatus[]> {
   const builders = registry();
-  const rows = await db.select().from(providers).orderBy(asc(providers.priority));
+  const rows = await (await getStore()).listProviders();
   return rows.map((row) => ({
     name: row.key,
     label: row.label,

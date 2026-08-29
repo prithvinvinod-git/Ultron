@@ -15,6 +15,8 @@ import {
 } from "@/app/components/chat/message-bubble";
 import { SuggestionCards } from "@/app/components/chat/suggestion-cards";
 import { useVoice } from "@/app/components/voice/use-voice";
+import { useLiveSession } from "@/app/components/voice/use-live-session";
+import { LiveMode } from "@/app/components/voice/live-mode";
 import type { ChatEvent } from "@/ai/types";
 
 interface SessionTranscript {
@@ -62,19 +64,22 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   const [error, setError] = useState<string | null>(null);
   const [autoSpeak, setAutoSpeak] = useState(false);
   const [hydrating, setHydrating] = useState(initialSessionId !== null);
+  const [live, setLive] = useState(false);
 
   const historyRef = useRef<{ role: "user" | "assistant"; content: string }[]>([]);
   const activeIdRef = useRef<string | null>(null);
+  const activeTextRef = useRef("");
   const abortRef = useRef<AbortController | null>(null);
   const spokenRef = useRef<Set<string>>(new Set());
   const sessionIdRef = useRef<string | null>(initialSessionId);
 
-  const { listening, speaking, speak, toggle, cleanupStreams } = useVoice({
-    onTranscript: (text) => {
-      void submit(text);
-    },
-    onError: (message) => setError(message),
-  });
+  const { listening, speaking, speak, toggle, stopSpeaking, cleanupStreams } =
+    useVoice({
+      onTranscript: (text) => {
+        void submit(text);
+      },
+      onError: (message) => setError(message),
+    });
 
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -233,6 +238,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
               : m,
           ),
         );
+        activeTextRef.current = event.content ?? activeTextRef.current;
         setStreaming(false);
         break;
       case "error":
@@ -249,8 +255,9 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   const submit = useCallback(
     async (raw: string) => {
       const text = raw.trim();
-      if (!text || streaming) return;
+      if (!text || streaming) return "";
       setError(null);
+      activeTextRef.current = "";
 
       // Session id: reuse the active one, or mint a fresh uuid for a new chat.
       const sid = sessionIdRef.current ?? makeId();
@@ -314,16 +321,38 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
           }
         }
       } catch (err) {
-        if ((err as Error).name === "AbortError") return;
+        if ((err as Error).name === "AbortError") return activeTextRef.current || "";
         const message = err instanceof Error ? err.message : String(err);
         applyEvent({ type: "error", message });
       } finally {
         setStreaming(false);
         abortRef.current = null;
       }
+      return activeTextRef.current || "";
     },
     [streaming, applyEvent],
   );
+
+  const liveOnTurn = useCallback(
+    async (text: string) => {
+      await submit(text);
+      return activeTextRef.current || null;
+    },
+    [submit],
+  );
+
+  const liveSession = useLiveSession({
+    onTurn: liveOnTurn,
+    speak,
+    stopSpeaking,
+    onError: (message) => setError(message),
+  });
+
+  const startLive = useCallback(() => {
+    setError(null);
+    setLive(true);
+    liveSession.start();
+  }, [liveSession]);
 
   const onDoneSpeak = useCallback(
     async (text: string) => {
@@ -333,7 +362,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   );
 
   const showSuggestions =
-    transcript.length === 0 && !streaming && !error && !hydrating;
+    transcript.length === 0 && !streaming && !error && !hydrating && !live;
 
   return (
     <div className="relative flex h-dvh flex-col overflow-hidden">
@@ -342,13 +371,18 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
         className="pointer-events-none absolute inset-0 opacity-[0.35]"
         style={{
           background:
-            "radial-gradient(600px 300px at 15% -10%, rgba(124,107,246,0.18), transparent 60%), radial-gradient(700px 320px at 95% 0%, rgba(34,211,238,0.12), transparent 60%)",
+            "radial-gradient(600px 300px at 15% -10%, rgba(217,119,87,0.14), transparent 60%), radial-gradient(700px 320px at 95% 0%, rgba(232,184,122,0.10), transparent 60%)",
         }}
       />
 
       <header className="pointer-events-none relative z-10 flex items-center justify-between px-6 pt-5 pb-2">
         <div className="text-sm text-mist">
-          {autoSpeak && speaking ? (
+          {live ? (
+            <span className="flex items-center gap-2 text-sigil">
+              <span className="h-1.5 w-1.5 animate-breathe rounded-full bg-sigil" />
+              Live session — {liveSession.status}
+            </span>
+          ) : autoSpeak && speaking ? (
             <span className="flex items-center gap-2 text-sigil">
               <span className="h-1.5 w-1.5 animate-breathe rounded-full bg-sigil" />
               Speaking…
@@ -357,7 +391,14 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
             <span>Ultron ready.</span>
           )}
         </div>
-        {listening && <div className="text-xs text-bad">Listening… click mic to stop</div>}
+        {live && liveSession.subtitle && (
+          <div className="max-w-[40%] truncate text-xs text-graphite">
+            {liveSession.subtitle}
+          </div>
+        )}
+        {listening && !live && (
+          <div className="text-xs text-bad">Listening… click mic to stop</div>
+        )}
       </header>
 
       <div className="relative z-10 flex-1 overflow-y-auto px-6 pb-4">
@@ -395,19 +436,34 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
         </div>
       </div>
 
-      <div className="relative z-10 mx-auto w-full max-w-2xl px-4 pb-5">
-        <Composer
-          onSend={(text) => void submit(text)}
-          disabled={streaming}
-          listening={listening}
-          speaking={speaking}
-          voiceEnabled
-          onToggleVoice={() => toggle()}
-          onToggleSpeak={() => setAutoSpeak((v) => !v)}
-        />
-        <p className="mt-2 text-center text-[11px] text-mist">
-          Agentive · local memory · Grok / Gemini · voice
-        </p>
+      <div className="relative z-10 mx-auto w-full max-w-2xl px-4 pb-6">
+        {live ? (
+          <LiveMode
+            status={liveSession.status}
+            subtitle={liveSession.subtitle}
+            onStop={() => {
+              liveSession.stop();
+              setLive(false);
+            }}
+          />
+        ) : (
+          <>
+            <Composer
+              onSend={(text) => void submit(text)}
+              disabled={streaming}
+              listening={listening}
+              speaking={speaking}
+              voiceEnabled
+              live={false}
+              onToggleVoice={() => toggle()}
+              onToggleSpeak={() => setAutoSpeak((v) => !v)}
+              onToggleLive={startLive}
+            />
+            <p className="mt-2 text-center text-[11px] text-mist">
+              Agentive · local memory · Gemini / Grok / OpenRouter · voice
+            </p>
+          </>
+        )}
       </div>
     </div>
   );

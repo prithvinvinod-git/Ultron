@@ -4,6 +4,8 @@ export interface ToolCall {
   id: string;
   name: string;
   arguments: string;
+  /** Provider-specific opaque token that must be echoed back (Gemini thought_signature). */
+  thoughtSignature?: string;
 }
 
 export interface ChatMessage {

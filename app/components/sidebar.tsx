@@ -131,8 +131,8 @@ export function Sidebar() {
 
       <div className="border-t border-border px-5 py-3">
         <div className="flex items-center gap-2 text-xs text-mist">
-          <span className="h-2 w-2 rounded-full bg-good shadow-[0_0_8px_var(--color-good)]" />
-          Local · libSQL · {process.env.NODE_ENV === "production" ? "prod" : "dev"}
+          <span className="h-2 w-2 rounded-full bg-brand shadow-[0_0_8px_var(--color-brand)]" />
+          Ultron · online
         </div>
       </div>
     </aside>

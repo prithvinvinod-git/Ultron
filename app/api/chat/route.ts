@@ -1,7 +1,5 @@
 import { runAgent } from "@/ai/agent";
-import { sessions, messages } from "@/db/schema";
-import { getDb } from "@/db/client";
-import { eq } from "drizzle-orm";
+import { getStore } from "@/db/store";
 import { randomUUID } from "node:crypto";
 import { SSE_HEADERS, jsonError, sseEncode } from "@/lib/http";
 import type { ChatMessage } from "@/ai/types";
@@ -35,20 +33,16 @@ export async function POST(request: Request) {
     return jsonError(400, "No chat messages provided.");
   }
 
-  const db = getDb();
+  const store = await getStore();
   const lastUser = [...history].reverse().find((m) => m.role === "user");
   let sessionId = body.sessionId;
   let isNewSession = false;
 
   if (sessionId) {
-    const existing = await db
-      .select({ id: sessions.id })
-      .from(sessions)
-      .where(eq(sessions.id, sessionId))
-      .limit(1);
-    if (!existing.length) {
+    const existing = await store.getSession(sessionId);
+    if (!existing) {
       isNewSession = true;
-      await db.insert(sessions).values({
+      await store.createSession({
         id: sessionId,
         title: truncate(lastUser?.content ?? "New conversation"),
       });
@@ -56,14 +50,14 @@ export async function POST(request: Request) {
   } else {
     isNewSession = true;
     sessionId = randomUUID();
-    await db.insert(sessions).values({
+    await store.createSession({
       id: sessionId,
       title: truncate(lastUser?.content ?? "New conversation"),
     });
   }
 
   if (lastUser?.content) {
-    await db.insert(messages).values({
+    await store.insertMessage({
       id: randomUUID(),
       sessionId,
       role: "user",
@@ -108,21 +102,23 @@ export async function POST(request: Request) {
         );
       } finally {
         if (finalContent !== null) {
-          await db.insert(messages).values({
+          await store.insertMessage({
             id: randomUUID(),
             sessionId,
             role: "assistant",
             content: finalContent ?? "",
-            provider: finalProvider,
-            model: finalModel,
+            provider: finalProvider || null,
+            model: finalModel || null,
           });
-          const update: Record<string, unknown> = { updatedAt: new Date() };
           if (isNewSession) {
-            update.title = truncate(
-              finalContent || (lastUser?.content ?? "New conversation"),
-            );
+            await store.touchSession(sessionId, {
+              title: truncate(
+                finalContent || (lastUser?.content ?? "New conversation"),
+              ),
+            });
+          } else {
+            await store.touchSession(sessionId, {});
           }
-          await db.update(sessions).set(update).where(eq(sessions.id, sessionId));
         }
         controller.close();
       }

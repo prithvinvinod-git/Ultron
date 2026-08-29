@@ -25,6 +25,16 @@ export function toOpenAIMessage(message: ChatMessage): OpenAIMessage {
               id: tc.id,
               type: "function" as const,
               function: { name: tc.name, arguments: tc.arguments },
+              // Gemini requires the thought_signature echoed back on function
+              // call parts. Only ever present on Gemini tool calls; other
+              // OpenAI-compatible providers ignore it.
+              ...(tc.thoughtSignature
+                ? {
+                    extra_content: {
+                      google: { thought_signature: tc.thoughtSignature },
+                    },
+                  }
+                : {}),
             }))
           : undefined,
       };
@@ -82,7 +92,7 @@ export function createOpenAICompatProvider(config: ProviderConfig): Provider {
 
       const frames = new Map<
         number,
-        { id: string; name: string; arguments: string }
+        { id: string; name: string; arguments: string; thoughtSignature?: string }
       >();
       let content = "";
 
@@ -106,19 +116,29 @@ export function createOpenAICompatProvider(config: ProviderConfig): Provider {
             const call = tc as {
               index?: number | null;
               id?: string | null;
-              name?: string | null;
-              arguments?: string | null;
+              function?: {
+                name?: string | null;
+                arguments?: string | null;
+              } | null;
+              extra_content?: {
+                google?: { thought_signature?: string | null };
+              } | null;
             };
             const index = call.index ?? frames.size;
-            const frame =
-              frames.get(index) ?? {
-                id: call.id ?? "",
-                name: call.name ?? "",
-                arguments: "",
-              };
-            if (call.id) frame.id += call.id;
-            if (call.name) frame.name += call.name;
-            if (call.arguments) frame.arguments += call.arguments;
+            const frame = frames.get(index) ?? {
+              id: "",
+              name: "",
+              arguments: "",
+            };
+            // id/name arrive once (typically the first frame); arguments stream
+            // as JSON fragments across frames.
+            if (call.id) frame.id = call.id;
+            if (call.function?.name) frame.name = call.function.name;
+            if (call.function?.arguments)
+              frame.arguments += call.function.arguments;
+            const signature =
+              call.extra_content?.google?.thought_signature ?? frame.thoughtSignature;
+            if (signature) frame.thoughtSignature = signature;
             frames.set(index, frame);
             yield {
               type: "tool",
@@ -132,6 +152,7 @@ export function createOpenAICompatProvider(config: ProviderConfig): Provider {
         id: frame.id,
         name: frame.name,
         arguments: frame.arguments,
+        thoughtSignature: frame.thoughtSignature,
       }));
 
       return {
@@ -159,10 +180,16 @@ export function createOpenAICompatProvider(config: ProviderConfig): Provider {
         toolCalls: (msg?.tool_calls ?? []).map((tc) => {
           const fn = (tc as { function?: { name?: string; arguments?: string | null } })
             .function;
+          const sig = (
+            tc as {
+              extra_content?: { google?: { thought_signature?: string | null } };
+            }
+          ).extra_content?.google?.thought_signature;
           return {
             id: tc.id ?? "",
             name: fn?.name ?? "",
             arguments: fn?.arguments ?? "",
+            thoughtSignature: sig ?? undefined,
           };
         }),
         model: completion.model ?? (options?.model ?? config.defaultModel),

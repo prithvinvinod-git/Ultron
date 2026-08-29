@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ArrowUp, Mic, MicOff, Volume2 } from "lucide-react";
+import { ArrowUp, Mic, MicOff, Radio, Volume2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function Composer({
@@ -12,6 +12,8 @@ export function Composer({
   voiceEnabled,
   onToggleVoice,
   onToggleSpeak,
+  live,
+  onToggleLive,
 }: {
   onSend: (text: string) => void;
   disabled?: boolean;
@@ -20,6 +22,8 @@ export function Composer({
   voiceEnabled: boolean;
   onToggleVoice: () => void;
   onToggleSpeak: () => void;
+  live?: boolean;
+  onToggleLive?: () => void;
 }) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -116,6 +120,16 @@ export function Composer({
           <ArrowUp size={17} />
         </button>
       </div>
+
+      {live === false && onToggleLive && (
+        <button
+          onClick={onToggleLive}
+          className="mx-auto mt-2 flex items-center gap-1.5 rounded-full border border-brand/40 bg-brand/10 px-3 py-1 text-[11px] text-brand-bright transition hover:bg-brand/20"
+        >
+          <Radio size={12} className="animate-breathe text-sigil" />
+          Live voice
+        </button>
+      )}
     </div>
   );
 }

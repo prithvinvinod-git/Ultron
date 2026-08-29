@@ -1,9 +1,6 @@
 import { getProviderStatus } from "@/ai/providers";
 import { voiceEnginesConfigured } from "@/ai/voice/speech";
-import { memoryCount } from "@/ai/memory/store";
-import { count } from "drizzle-orm";
-import { messages, sessions } from "@/db/schema";
-import { getDb } from "@/db/client";
+import { getStore } from "@/db/store";
 import os from "node:os";
 import process from "node:process";
 
@@ -11,16 +8,16 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const [providers, voice] = await Promise.all([
+  const [providers, voice, store] = await Promise.all([
     getProviderStatus(),
     Promise.resolve(voiceEnginesConfigured()),
+    getStore(),
   ]);
 
-  const db = getDb();
   const [sessionCount, messageCount, memoryTotal] = await Promise.all([
-    db.select({ value: count() }).from(sessions),
-    db.select({ value: count() }).from(messages),
-    memoryCount(),
+    store.countSessions(),
+    store.countMessagesAll(),
+    store.memoryCount(),
   ]);
 
   const killSwitch = {
@@ -43,10 +40,14 @@ export async function GET() {
       node: process.version,
     },
     db: {
-      engine: "libSQL",
-      url: process.env.TURSO_DATABASE_URL ?? "file:local.db",
-      sessions: sessionCount[0]?.value ?? 0,
-      messages: messageCount[0]?.value ?? 0,
+      engine: store.engine,
+      store: store.engine === "firestore" ? "Firebase Cloud Firestore" : "libSQL",
+      url:
+        store.engine === "firestore"
+          ? (process.env.FIREBASE_PROJECT_ID ?? "firebase-project")
+          : (process.env.TURSO_DATABASE_URL ?? "file:local.db"),
+      sessions: sessionCount,
+      messages: messageCount,
       memories: memoryTotal,
     },
     providers,
@@ -55,8 +56,7 @@ export async function GET() {
       chat: true,
       tools: true,
       memory: true,
-      // Realtime live voice is a Phase 1 feature built on top of this base.
-      liveVoice: "stub",
+      liveVoice: "live",
       sessions: true,
     },
     killSwitch,

@@ -50,11 +50,13 @@ export async function* runAgent(
       ? [configured[preferredIndex], ...configured.filter((_, i) => i !== preferredIndex)]
       : configured;
 
+  const failures: string[] = [];
   for (const provider of ordered) {
     if (options.signal?.aborted) {
       yield { type: "error", message: "Request aborted." };
       return;
     }
+    let retries = 0;
     try {
       for await (const event of runTurn(provider, conversation, options)) {
         if (options.signal?.aborted) break;
@@ -67,9 +69,32 @@ export async function* runAgent(
         return;
       }
       const message = err instanceof Error ? err.message : String(err);
+      // Free/rate-limited providers (esp. OpenRouter's shared `:free` pool and
+      // Gemini free tier) return transient 429/5xx. Retry once with backoff
+      // before falling through to the next provider.
+      if (retries === 0 && isTransient(message)) {
+        retries++;
+        const delayMs = Math.min(parseRetryAfter(message), 12) * 1000;
+        await sleep(delayMs);
+        try {
+          for await (const event of runTurn(provider, conversation, options)) {
+            if (options.signal?.aborted) break;
+            yield event;
+          }
+          return;
+        } catch (retryErr) {
+          const retryMessage = retryErr instanceof Error ? retryErr.message : String(retryErr);
+          failures.push(`${provider.config.name}: ${retryMessage}`);
+        }
+      } else {
+        failures.push(`${provider.config.name}: ${message}`);
+      }
       const isLast = provider === ordered[ordered.length - 1];
       if (isLast) {
-        yield { type: "error", message: `All providers failed: ${message}` };
+        yield {
+          type: "error",
+          message: `All providers failed. ${failures.join(" | ")}`,
+        };
         return;
       }
       // Otherwise try the next provider with the same conversation state.
@@ -180,4 +205,26 @@ Current time: ${new Date().toString()}`;
 KEY MEMORIES:
 ${renderMemories(opts.memories)}
 `;
+}
+
+/** Transient rate-limit / server errors worth a single retry. */
+function isTransient(message: string): boolean {
+  return /\b(429|5\d\d)\b|Provider returned error|upstream_|\bresource_exhausted\b|quota exceeded.*retr/i.test(
+    message,
+  );
+}
+
+/** Reads a retry hint from provider error payloads; defaults to 5s. */
+function parseRetryAfter(message: string): number {
+  const sec = message.match(/retry_after_seconds?["\s:]+(\d+)/i);
+  if (sec) return Math.max(1, Number(sec[1]));
+  const header = message.match(/["']?Retry-After["']?["\s:]+(\d+)/i);
+  if (header) return Math.max(1, Number(header[1]));
+  const retry = message.match(/retry in (\d+(?:\.\d+)?)s/i);
+  if (retry) return Math.max(1, Math.ceil(Number(retry[1])));
+  return 5;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

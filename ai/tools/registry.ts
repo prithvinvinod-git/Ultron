@@ -1,7 +1,5 @@
 import "server-only";
-import { count } from "drizzle-orm";
-import { messages, sessions } from "@/db/schema";
-import { db } from "@/db/client";
+import { getStore } from "@/db/store";
 import { getProviderStatus } from "@/ai/providers";
 import { memoryCount, recallMemories, saveMemory } from "@/ai/memory/store";
 import type { ToolSpec } from "@/ai/types";
@@ -134,7 +132,15 @@ const TOOLS: ToolDefinition[] = [
       parameters: { type: "object", properties: {} },
     },
     execute: async () => {
-      const providers = await getProviderStatus();
+      const [providers, store, memories] = await Promise.all([
+        getProviderStatus(),
+        getStore(),
+        memoryCount(),
+      ]);
+      const counts = await Promise.all([
+        store.countSessions(),
+        store.countMessagesAll(),
+      ]);
       return JSON.stringify(
         {
           host: {
@@ -148,9 +154,10 @@ const TOOLS: ToolDefinition[] = [
           },
           runtime: { node: process.version, pid: process.pid },
           db: {
-            sessions: (await db.select({ value: count() }).from(sessions))[0]?.value ?? 0,
-            messages: (await db.select({ value: count() }).from(messages))[0]?.value ?? 0,
-            memories: await memoryCount(),
+            engine: store.engine,
+            sessions: counts[0],
+            messages: counts[1],
+            memories,
           },
           providers: providers.map((p) => ({
             name: p.name,

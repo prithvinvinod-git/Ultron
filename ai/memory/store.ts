@@ -1,9 +1,9 @@
 import "server-only";
-import { and, count, desc, eq, like, or, SQL } from "drizzle-orm";
-import { memories } from "@/db/schema";
-import { db } from "@/db/client";
+import { getStore } from "@/db/store";
 import { randomUUID } from "node:crypto";
-import type { Memory } from "@/db/schema";
+import type { MemoryRow as Memory } from "@/db/types";
+
+export type { Memory };
 
 export interface MemoryInput {
   kind?: string;
@@ -26,33 +26,8 @@ export interface RecallOptions {
 export async function recallMemories(
   options: RecallOptions = {},
 ): Promise<Memory[]> {
-  const { query, sessionId, kind, limit = 8 } = options;
-  const conds: SQL[] = [];
-
-  if (sessionId) {
-    conds.push(or(eq(memories.scope, "global"), eq(memories.sessionId, sessionId))!);
-  } else {
-    conds.push(eq(memories.scope, "global"));
-  }
-
-  if (kind) conds.push(eq(memories.kind, kind));
-  if (query) {
-    const needle = `%${query}%`;
-    conds.push(
-      or(
-        like(memories.summary, needle),
-        like(memories.detail, needle),
-        like(memories.tags, needle),
-      )!,
-    );
-  }
-
-  return db
-    .select()
-    .from(memories)
-    .where(conds.length === 1 ? conds[0] : and(...conds))
-    .orderBy(desc(memories.importance), desc(memories.createdAt))
-    .limit(limit);
+  const store = await getStore();
+  return store.recallMemories(options);
 }
 
 export async function saveMemory(input: MemoryInput): Promise<Memory> {
@@ -67,29 +42,20 @@ export async function saveMemory(input: MemoryInput): Promise<Memory> {
     importance: input.importance ?? 1,
     createdAt: new Date(),
   };
-  await db.insert(memories).values(row);
+  await (await getStore()).saveMemory(row);
   return row;
 }
 
 export async function listMemories(limit = 100): Promise<Memory[]> {
-  return db
-    .select()
-    .from(memories)
-    .orderBy(desc(memories.createdAt))
-    .limit(limit);
+  return (await getStore()).listMemories(limit);
 }
 
 export async function deleteMemory(id: string): Promise<boolean> {
-  const result = await db
-    .delete(memories)
-    .where(eq(memories.id, id))
-    .returning({ id: memories.id });
-  return result.length > 0;
+  return (await getStore()).deleteMemory(id);
 }
 
 export async function memoryCount(): Promise<number> {
-  const rows = await db.select({ value: count() }).from(memories);
-  return rows[0]?.value ?? 0;
+  return (await getStore()).memoryCount();
 }
 
 /** Renders memories into the concise "KEY MEMORIES" block used in the system prompt. */
