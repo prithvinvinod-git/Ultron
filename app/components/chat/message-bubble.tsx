@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Loader2, TriangleAlert, Volume2, X } from "lucide-react";
+import { Check, Loader2, Square, TriangleAlert, Volume2, X } from "lucide-react";
 import { Markdown } from "@/app/components/chat/markdown";
 import { cn } from "@/lib/utils";
 
@@ -27,9 +27,11 @@ export interface MessageUI {
 export function MessageBubble({
   message,
   onSpeak,
+  isSpeaking,
 }: {
   message: MessageUI;
-  onSpeak: (text: string) => void;
+  onSpeak: (id: string, text: string) => void;
+  isSpeaking?: boolean;
 }) {
   const isUser = message.role === "user";
 
@@ -130,12 +132,21 @@ export function MessageBubble({
                     </span>
                     {message.text && (
                       <button
-                        onClick={() => onSpeak(message.text)}
-                        className="flex items-center gap-1 text-mist transition hover:text-brand-bright"
-                        aria-label="Speak response"
+                        onClick={() => onSpeak(message.id, message.text)}
+                        className={cn(
+                          "flex items-center gap-1 transition",
+                          isSpeaking
+                            ? "text-brand-bright"
+                            : "text-mist hover:text-brand-bright",
+                        )}
+                        aria-label={isSpeaking ? "Stop speaking" : "Speak response"}
                       >
-                        <Volume2 size={12} />
-                        <span>Listen</span>
+                        {isSpeaking ? (
+                          <Square size={12} />
+                        ) : (
+                          <Volume2 size={12} />
+                        )}
+                        <span>{isSpeaking ? "Stop" : "Listen"}</span>
                       </button>
                     )}
                   </>

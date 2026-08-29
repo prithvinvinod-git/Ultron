@@ -44,6 +44,18 @@ export function Sidebar() {
     loadSessions();
   }, []);
 
+  // Keep the Recent sessions list fresh without a manual refresh: re-fetch on
+  // window focus and on a short interval so a newly created conversation shows up.
+  useEffect(() => {
+    const onFocus = () => loadSessions();
+    window.addEventListener("focus", onFocus);
+    const id = window.setInterval(loadSessions, 4000);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.clearInterval(id);
+    };
+  }, []);
+
   const remove = async (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();

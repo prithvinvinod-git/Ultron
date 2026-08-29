@@ -62,17 +62,18 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   const [transcript, setTranscript] = useState<MessageUI[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [autoSpeak, setAutoSpeak] = useState(false);
   const [hydrating, setHydrating] = useState(initialSessionId !== null);
   const [live, setLive] = useState(false);
   const [draft, setDraft] = useState("");
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
 
   const historyRef = useRef<{ role: "user" | "assistant"; content: string }[]>([]);
   const activeIdRef = useRef<string | null>(null);
   const activeTextRef = useRef("");
   const abortRef = useRef<AbortController | null>(null);
-  const spokenRef = useRef<Set<string>>(new Set());
   const sessionIdRef = useRef<string | null>(initialSessionId);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const stickRef = useRef(true);
 
   const { listening, speaking, speak, begin, end, stopSpeaking, cleanupStreams } =
     useVoice({
@@ -127,20 +128,48 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
     };
   }, [cleanupStreams]);
 
-  // Auto-speak completed answers when the toggle is on.
-  useEffect(() => {
-    if (!autoSpeak) return;
+  // Toggle TTS for a given assistant message: play it, or stop if already
+  // speaking. Keeps the composer speaker button in sync via `speaking`.
+  const onSpeakMessage = useCallback(
+    (id: string, text: string) => {
+      if (speaking) {
+        stopSpeaking();
+        setSpeakingId(null);
+      } else if (text.trim()) {
+        setSpeakingId(id);
+        void speak(text);
+      }
+    },
+    [speaking, speak, stopSpeaking],
+  );
+
+  const toggleSpeak = useCallback(() => {
+    if (speaking) {
+      stopSpeaking();
+      setSpeakingId(null);
+      return;
+    }
     const last = transcript[transcript.length - 1];
-    if (
-      last?.role === "assistant" &&
-      last.text &&
-      !last.streaming &&
-      !spokenRef.current.has(last.id)
-    ) {
-      spokenRef.current.add(last.id);
+    if (last && last.role === "assistant" && last.text.trim()) {
+      setSpeakingId(last.id);
       void speak(last.text);
     }
-  }, [transcript, autoSpeak, speak]);
+  }, [speaking, speak, stopSpeaking, transcript]);
+
+  // Auto-scroll to the latest content, but only while the user is already at
+  // the bottom. If the user scrolls up, stop following until they return.
+  useEffect(() => {
+    if (!stickRef.current) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [transcript]);
+
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
 
   const applyEvent = useCallback((event: ChatEvent) => {
     const id = activeIdRef.current;
@@ -256,6 +285,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
       const text = raw.trim();
       if (!text || streaming) return "";
       setError(null);
+      stickRef.current = true;
       activeTextRef.current = "";
 
       // Session id: reuse the active one, or mint a fresh uuid for a new chat.
@@ -353,15 +383,16 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
     liveSession.start();
   }, [liveSession]);
 
-  const onDoneSpeak = useCallback(
-    async (text: string) => {
-      if (text.trim()) await speak(text);
-    },
-    [speak],
-  );
-
   const showSuggestions =
     transcript.length === 0 && !streaming && !error && !hydrating && !live;
+
+  // Live-mode captions are derived straight from the transcript so they update
+  // live (and auto-scroll) as the assistant streams its replies.
+  const liveCaptions = live
+    ? transcript
+        .filter((m) => m.role === "assistant" && m.text.trim() && !m.error)
+        .map((m) => ({ id: m.id, text: m.text }))
+    : [];
 
   return (
     <div className="relative flex h-dvh flex-col overflow-hidden">
@@ -381,7 +412,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
               <span className="h-1.5 w-1.5 animate-breathe rounded-full bg-sigil" />
               Live session — {liveSession.status}
             </span>
-          ) : autoSpeak && speaking ? (
+          ) : speaking ? (
             <span className="flex items-center gap-2 text-sigil">
               <span className="h-1.5 w-1.5 animate-breathe rounded-full bg-sigil" />
               Speaking…
@@ -400,73 +431,81 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
         )}
       </header>
 
-      <div className="relative z-10 flex-1 overflow-y-auto px-6 pb-4">
-        <div className="mx-auto flex max-w-2xl flex-col gap-5 pt-4">
-          {showSuggestions && (
-            <div className="animate-rise mb-4 flex flex-col items-start gap-2 pt-6">
-              <h1 className="text-2xl font-semibold tracking-tight text-ink">
-                Good to see you.
-              </h1>
-              <p className="text-sm text-graphite">
-                Chat with tools, memory, and voice. Try one of these:
-              </p>
-              <div className="mt-2">
-                <SuggestionCards
-                  visible
-                  onPick={(prompt) => void submit(prompt)}
-                />
-              </div>
-            </div>
-          )}
-
-          {transcript.map((message) => (
-            <MessageBubble
-              key={message.id}
-              message={message}
-              onSpeak={(text) => void onDoneSpeak(text)}
-            />
-          ))}
-
-          {error && (
-            <div className="rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">
-              {error}
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="relative z-10 mx-auto w-full max-w-2xl px-4 pb-6">
+      <div className="relative z-10 min-h-0 flex-1">
         {live ? (
           <LiveMode
             status={liveSession.status}
-            subtitle={liveSession.subtitle}
+            captions={liveCaptions}
             onStop={() => {
               liveSession.stop();
               setLive(false);
             }}
           />
         ) : (
-          <>
-            <Composer
-              value={draft}
-              onValueChange={setDraft}
-              onSend={(text) => void submit(text)}
-              disabled={streaming}
-              listening={listening}
-              speaking={speaking}
-              voiceEnabled
-              live={false}
-              onBeginVoice={() => void begin()}
-              onEndVoice={end}
-              onToggleSpeak={() => setAutoSpeak((v) => !v)}
-              onToggleLive={startLive}
-            />
-            <p className="mt-2 text-center text-[11px] text-mist">
-              Agentive · local memory · Gemini / Grok / OpenRouter · voice
-            </p>
-          </>
+          <div
+            ref={scrollRef}
+            onScroll={onScroll}
+            className="h-full overflow-y-auto px-6 pb-4"
+          >
+            <div className="mx-auto flex max-w-2xl flex-col gap-5 pt-4">
+              {showSuggestions && (
+                <div className="animate-rise mb-4 flex flex-col items-start gap-2 pt-6">
+                  <h1 className="text-2xl font-semibold tracking-tight text-ink">
+                    Good to see you.
+                  </h1>
+                  <p className="text-sm text-graphite">
+                    Chat with tools, memory, and voice. Try one of these:
+                  </p>
+                  <div className="mt-2">
+                    <SuggestionCards
+                      visible
+                      onPick={(prompt) => void submit(prompt)}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {transcript.map((message) => (
+                <MessageBubble
+                  key={message.id}
+                  message={message}
+                  isSpeaking={
+                    speaking && message.role === "assistant" && message.id === speakingId
+                  }
+                  onSpeak={onSpeakMessage}
+                />
+              ))}
+
+              {error && (
+                <div className="rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">
+                  {error}
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </div>
+
+      {!live && (
+        <div className="relative z-10 mx-auto w-full max-w-2xl px-4 pb-6">
+          <Composer
+            value={draft}
+            onValueChange={setDraft}
+            onSend={(text) => void submit(text)}
+            disabled={streaming}
+            listening={listening}
+            speaking={speaking}
+            voiceEnabled
+            onBeginVoice={() => void begin()}
+            onEndVoice={end}
+            onToggleSpeak={toggleSpeak}
+            onToggleLive={startLive}
+          />
+          <p className="mt-2 text-center text-[11px] text-mist">
+            Agentive · local memory · Gemini / Grok / OpenRouter · voice
+          </p>
+        </div>
+      )}
     </div>
   );
 }
