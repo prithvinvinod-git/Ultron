@@ -65,6 +65,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   const [autoSpeak, setAutoSpeak] = useState(false);
   const [hydrating, setHydrating] = useState(initialSessionId !== null);
   const [live, setLive] = useState(false);
+  const [draft, setDraft] = useState("");
 
   const historyRef = useRef<{ role: "user" | "assistant"; content: string }[]>([]);
   const activeIdRef = useRef<string | null>(null);
@@ -73,11 +74,9 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   const spokenRef = useRef<Set<string>>(new Set());
   const sessionIdRef = useRef<string | null>(initialSessionId);
 
-  const { listening, speaking, speak, toggle, stopSpeaking, cleanupStreams } =
+  const { listening, speaking, speak, begin, end, stopSpeaking, cleanupStreams } =
     useVoice({
-      onTranscript: (text) => {
-        void submit(text);
-      },
+      onTranscript: (text) => setDraft(text),
       onError: (message) => setError(message),
     });
 
@@ -449,13 +448,16 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
         ) : (
           <>
             <Composer
+              value={draft}
+              onValueChange={setDraft}
               onSend={(text) => void submit(text)}
               disabled={streaming}
               listening={listening}
               speaking={speaking}
               voiceEnabled
               live={false}
-              onToggleVoice={() => toggle()}
+              onBeginVoice={() => void begin()}
+              onEndVoice={end}
               onToggleSpeak={() => setAutoSpeak((v) => !v)}
               onToggleLive={startLive}
             />

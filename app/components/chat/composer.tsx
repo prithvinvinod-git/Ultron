@@ -1,38 +1,43 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { ArrowUp, Mic, MicOff, Radio, Volume2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function Composer({
+  value,
+  onValueChange,
   onSend,
   disabled,
   listening,
   speaking,
   voiceEnabled,
-  onToggleVoice,
+  onBeginVoice,
+  onEndVoice,
   onToggleSpeak,
   live,
   onToggleLive,
 }: {
+  value: string;
+  onValueChange: (value: string) => void;
   onSend: (text: string) => void;
   disabled?: boolean;
   listening: boolean;
   speaking: boolean;
   voiceEnabled: boolean;
-  onToggleVoice: () => void;
+  onBeginVoice: () => void;
+  onEndVoice: () => void;
   onToggleSpeak: () => void;
   live?: boolean;
   onToggleLive?: () => void;
 }) {
-  const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const submit = () => {
     const text = value.trim();
     if (!text || disabled) return;
     onSend(text);
-    setValue("");
+    onValueChange("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
   };
 
@@ -50,6 +55,10 @@ export function Composer({
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
   };
 
+  useEffect(() => {
+    grow();
+  }, [value]);
+
   return (
     <div className="w-full max-w-2xl">
       <div
@@ -61,15 +70,24 @@ export function Composer({
       >
         {voiceEnabled && (
           <button
-            onClick={onToggleVoice}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              onBeginVoice();
+            }}
+            onPointerUp={(e) => {
+              e.preventDefault();
+              onEndVoice();
+            }}
+            onPointerLeave={() => onEndVoice()}
+            onPointerCancel={() => onEndVoice()}
             className={cn(
-              "flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition",
+              "group/mic flex h-9 w-9 shrink-0 items-center justify-center rounded-full select-none transition active:scale-95",
               listening
-                ? "bg-bad/20 text-bad"
+                ? "bg-bad/25 text-bad"
                 : "text-mist hover:bg-surface-2 hover:text-ink",
             )}
-            aria-label={listening ? "Stop voice input" : "Start voice input"}
-            title={listening ? "Listening… click to stop" : "Push to talk"}
+            aria-label={listening ? "Listening… release to stop" : "Hold to talk"}
+            title={listening ? "Listening… release to stop" : "Hold to talk"}
           >
             {listening ? (
               <MicOff size={17} className="animate-breathe" />
@@ -83,7 +101,7 @@ export function Composer({
           ref={textareaRef}
           value={value}
           onChange={(e) => {
-            setValue(e.target.value);
+            onValueChange(e.target.value);
             grow();
           }}
           onKeyDown={onKeyDown}
