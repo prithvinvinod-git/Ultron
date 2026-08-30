@@ -8,24 +8,26 @@ export function Composer({
   onSend,
   disabled,
   listening,
-  speaking,
   voiceEnabled,
   onBeginVoice,
   onEndVoice,
-  onToggleSpeak,
   onToggleLive,
+  voices,
+  voiceKey,
+  onVoiceChange,
 }: {
   value: string;
   onValueChange: (value: string) => void;
   onSend: (text: string) => void;
   disabled?: boolean;
   listening: boolean;
-  speaking: boolean;
   voiceEnabled: boolean;
   onBeginVoice: () => void;
   onEndVoice: () => void;
-  onToggleSpeak: () => void;
   onToggleLive?: () => void;
+  voices?: { key: string; name: string; accent: string; engine: string; gender: string }[];
+  voiceKey?: string;
+  onVoiceChange?: (key: string) => void;
 }) {
   return (
     <div className="w-full max-w-2xl">
@@ -38,12 +40,13 @@ export function Composer({
         isLoading={disabled}
         disabled={disabled}
         listening={listening}
-        speaking={speaking}
         voiceEnabled={voiceEnabled}
         onBeginVoice={onBeginVoice}
         onEndVoice={onEndVoice}
-        onToggleSpeak={onToggleSpeak}
         onToggleLive={onToggleLive}
+        voices={voices}
+        voiceKey={voiceKey}
+        onVoiceChange={onVoiceChange}
         placeholder="Message Ultron…"
       />
     </div>

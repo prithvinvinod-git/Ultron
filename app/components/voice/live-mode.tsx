@@ -39,7 +39,11 @@ export function LiveMode({
         )}
       >
         <VoicePoweredOrb
-          enableVoiceControl={status === "listening"}
+          // The orb animates on its own; we deliberately keep its microphone
+          // DISABLED because useLiveSession already owns the live mic (Web
+          // Speech / VAD). Having the orb open a second getUserMedia stream
+          // caused a race where the mic stayed on after ending live mode.
+          enableVoiceControl={false}
           className="h-full w-full overflow-visible"
         />
         {status === "speaking" && (

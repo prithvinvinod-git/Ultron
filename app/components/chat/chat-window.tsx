@@ -66,6 +66,9 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   const [live, setLive] = useState(false);
   const [draft, setDraft] = useState("");
   const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const [voices, setVoices] = useState<
+    { key: string; name: string; accent: string; engine: string; gender: string }[]
+  >([]);
 
   const historyRef = useRef<{ role: "user" | "assistant"; content: string }[]>([]);
   const activeIdRef = useRef<string | null>(null);
@@ -75,11 +78,25 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const stickRef = useRef(true);
 
-  const { listening, speaking, speak, begin, end, stopSpeaking, cleanupStreams } =
+  const { listening, speaking, speak, begin, end, stopSpeaking, cleanupStreams, voiceKey, setVoiceKey } =
     useVoice({
       onTranscript: (text) => setDraft(text),
       onError: (message) => setError(message),
     });
+
+  // Load the available TTS voices once so the composer can offer a voice picker.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/voice/voices")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { voices?: typeof voices } | null) => {
+        if (!cancelled && data?.voices) setVoices(data.voices);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -142,19 +159,6 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
     },
     [speaking, speak, stopSpeaking],
   );
-
-  const toggleSpeak = useCallback(() => {
-    if (speaking) {
-      stopSpeaking();
-      setSpeakingId(null);
-      return;
-    }
-    const last = transcript[transcript.length - 1];
-    if (last && last.role === "assistant" && last.text.trim()) {
-      setSpeakingId(last.id);
-      void speak(last.text);
-    }
-  }, [speaking, speak, stopSpeaking, transcript]);
 
   // Auto-scroll to the latest content, but only while the user is already at
   // the bottom. If the user scrolls up, stop following until they return.
@@ -379,9 +383,11 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
 
   const startLive = useCallback(() => {
     setError(null);
+    // If a push-to-talk capture is mid-flight, stop it so its mic isn't left on.
+    end();
     setLive(true);
     liveSession.start();
-  }, [liveSession]);
+  }, [liveSession, end]);
 
   const showSuggestions =
     transcript.length === 0 && !streaming && !error && !hydrating && !live;
@@ -405,7 +411,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
         }}
       />
 
-      <header className="pointer-events-none relative z-10 flex items-center justify-between px-6 pt-5 pb-2">
+      <header className="pointer-events-none relative z-10 flex items-center justify-between pl-14 pr-4 pt-5 pb-2 md:pl-6 md:pr-6">
         <div className="text-sm text-mist">
           {live ? (
             <span className="flex items-center gap-2 text-sigil">
@@ -432,16 +438,17 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
       </header>
 
       <div className="relative z-10 min-h-0 flex-1">
-        {live ? (
-          <LiveMode
-            status={liveSession.status}
-            captions={liveCaptions}
-            onStop={() => {
-              liveSession.stop();
-              setLive(false);
-            }}
-          />
-        ) : (
+          {live ? (
+            <LiveMode
+              status={liveSession.status}
+              captions={liveCaptions}
+              onStop={() => {
+                liveSession.stop();
+                end();
+                setLive(false);
+              }}
+            />
+          ) : (
           <div
             ref={scrollRef}
             onScroll={onScroll}
@@ -494,12 +501,13 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
             onSend={(text) => void submit(text)}
             disabled={streaming}
             listening={listening}
-            speaking={speaking}
             voiceEnabled
             onBeginVoice={() => void begin()}
             onEndVoice={end}
-            onToggleSpeak={toggleSpeak}
             onToggleLive={startLive}
+            voices={voices}
+            voiceKey={voiceKey}
+            onVoiceChange={setVoiceKey}
           />
           <p className="mt-2 text-center text-[11px] text-mist">
             Agentive · local memory · Gemini / Grok / OpenRouter · voice

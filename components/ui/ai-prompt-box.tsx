@@ -14,7 +14,6 @@ import {
   BrainCog,
   FolderCode,
   AudioLines,
-  Volume2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -49,7 +48,7 @@ interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement
 const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(({ className, ...props }, ref) => (
   <textarea
     className={cn(
-      "flex w-full rounded-md border-none bg-transparent px-3 py-2.5 text-base text-gray-100 placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50 min-h-[44px] resize-none",
+      "flex w-full rounded-md border-none bg-transparent px-3 py-2.5 text-base text-gray-100 placeholder:text-gray-400 focus-visible:outline-none focus-visible:ring-0 disabled:cursor-not-allowed min-h-[44px] resize-none",
       className,
     )}
     ref={ref}
@@ -167,45 +166,22 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 );
 Button.displayName = "Button";
 
-// VoiceRecorder Component (visual-only bars + timer).
+// VoiceRecorder Pill — compact "recording" indicator shown while the composer
+// mic is capturing, since the textarea stays visible to show live dictation.
 interface VoiceRecorderProps {
   time: number;
-  visualizerBars?: number;
 }
-const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ time, visualizerBars = 32 }) => {
-  const bars = React.useMemo(
-    () =>
-      Array.from({ length: visualizerBars }, (_, i) => ({
-        height: 15 + ((i * 37) % 85),
-        duration: 0.5 + ((i * 13) % 5) / 10,
-        delay: ((i * 5) % 100) / 20,
-      })),
-    [visualizerBars],
-  );
+const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ time }) => {
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
   return (
-    <div className="flex w-full flex-col items-center justify-center py-3 transition-all duration-300">
-      <div className="mb-3 flex items-center gap-2">
-        <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-        <span className="font-mono text-sm text-white/80">{formatTime(time)}</span>
-      </div>
-      <div className="flex h-10 w-full items-center justify-center gap-0.5 px-4">
-        {bars.map((bar, i) => (
-          <div
-            key={i}
-            className="w-0.5 rounded-full bg-white/50 animate-pulse"
-            style={{
-              height: `${bar.height}%`,
-              animationDelay: `${bar.delay}s`,
-              animationDuration: `${bar.duration}s`,
-            }}
-          />
-        ))}
-      </div>
+    <div className="mb-1 inline-flex items-center gap-2 rounded-full border border-red-500/40 bg-red-500/10 px-2.5 py-1">
+      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+      <span className="font-mono text-[11px] text-red-400">{formatTime(time)}</span>
+      <span className="text-[11px] text-white/60">Recording…</span>
     </div>
   );
 };
@@ -431,12 +407,13 @@ interface PromptInputBoxProps {
   onValueChange?: (value: string) => void;
   // Existing Ultron controls.
   listening?: boolean;
-  speaking?: boolean;
   voiceEnabled?: boolean;
   onBeginVoice?: () => void;
   onEndVoice?: () => void;
-  onToggleSpeak?: () => void;
   onToggleLive?: () => void;
+  voices?: { key: string; name: string; accent: string; engine: string; gender: string }[];
+  voiceKey?: string;
+  onVoiceChange?: (key: string) => void;
 }
 export const PromptInputBox = React.forwardRef<
   HTMLDivElement,
@@ -449,14 +426,15 @@ export const PromptInputBox = React.forwardRef<
     className,
     disabled: externalDisabled = false,
     listening = false,
-    speaking = false,
     voiceEnabled = true,
     value: externalValue,
     onValueChange: externalOnValueChange,
     onBeginVoice,
     onEndVoice,
-    onToggleSpeak,
     onToggleLive,
+    voices,
+    voiceKey,
+    onVoiceChange,
   } = props;
   const [input, setInput] = React.useState(externalValue || "");
 
@@ -641,12 +619,9 @@ export const PromptInputBox = React.forwardRef<
           </div>
         )}
 
-        <div
-          className={cn(
-            "transition-all duration-300",
-            listening ? "h-0 overflow-hidden opacity-0" : "opacity-100",
-          )}
-        >
+        {listening && <VoiceRecorder time={recTime} />}
+
+        <div className="transition-all duration-300">
           <PromptInputTextarea
             placeholder={
               showSearch
@@ -660,8 +635,6 @@ export const PromptInputBox = React.forwardRef<
             className="text-base"
           />
         </div>
-
-        {listening && <VoiceRecorder time={recTime} />}
 
         <PromptInputActions className="flex items-center justify-between gap-2 p-0 pt-2">
           <div
@@ -798,10 +771,31 @@ export const PromptInputBox = React.forwardRef<
                 </AnimatePresence>
               </button>
             </div>
+          </div>
 
-            <CustomDivider />
+          {/* Right controls: voice picker + mic pinned beside the live/send action */}
+          <div className="flex items-center gap-1">
+            {voices && voices.length > 0 && (
+              <PromptInputAction tooltip="Voice">
+                <div className="flex items-center gap-1 rounded-full border border-[#2A2C31] bg-[#1F2023]/70 py-1 pl-2 pr-1 transition-colors hover:border-[#3A3D44]">
+                  <AudioLines className="h-3 w-3 text-brand-bright" />
+                  <select
+                    value={voiceKey ?? ""}
+                    onChange={(e) => onVoiceChange?.(e.target.value)}
+                    aria-label="Select voice"
+                    title="Select voice"
+                    className="max-w-[92px] cursor-pointer appearance-none bg-transparent pl-0.5 pr-1 text-[11px] font-medium text-[#D1D5DB] outline-none"
+                  >
+                    {voices.map((v) => (
+                      <option key={v.key} value={v.key}>
+                        {v.name} · {v.accent}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </PromptInputAction>
+            )}
 
-            {/* Existing Ultron controls */}
             {voiceEnabled && (
               <VoiceInput
                 listening={listening}
@@ -812,84 +806,70 @@ export const PromptInputBox = React.forwardRef<
               />
             )}
 
-            {onToggleSpeak && (
-              <PromptInputAction tooltip={speaking ? "Stop speaking" : "Read last reply"}>
-                <button
-                  onClick={onToggleSpeak}
-                  className={cn(
-                    "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
-                    speaking
-                      ? "bg-brand/20 text-brand-bright"
-                      : "text-[#9CA3AF] hover:bg-gray-600/30 hover:text-[#D1D5DB]",
-                  )}
-                >
-                  <Volume2 className={cn("h-4 w-4", speaking && "animate-pulse")} />
-                </button>
-              </PromptInputAction>
-            )}
-          </div>
-
-          <PromptInputAction
-            tooltip={
-              isLoading
-                ? "Stop generation"
-                : listening
-                ? "Stop recording"
-                : hasContent
-                ? "Send message"
-                : "Voice message"
-            }
-          >
-            <Button
-              variant="default"
-              size="icon"
-              className={cn(
-                "h-8 w-8 rounded-full transition-all duration-200",
-                listening
-                  ? "bg-transparent text-red-500 hover:bg-gray-600/30 hover:text-red-400"
-                  : hasContent
-                  ? "bg-white text-[#1F2023] hover:bg-white/80"
-                  : onToggleLive
-                  ? "bg-transparent text-[#9CA3AF] hover:bg-gray-600/30 hover:text-[#D1D5DB]"
-                  : "bg-transparent text-[#9CA3AF] hover:bg-gray-600/30 hover:text-[#D1D5DB]",
-              )}
-              onClick={() => {
-                if (listening) {
-                  onEndVoice?.();
-                } else if (hasContent) {
-                  handleSubmit();
-                } else if (onToggleLive) {
-                  onToggleLive?.();
-                } else {
-                  onBeginVoice?.();
-                }
-              }}
-              disabled={isLoading && !hasContent}
-              aria-label={
+            <PromptInputAction
+              tooltip={
                 isLoading
                   ? "Stop generation"
                   : listening
                   ? "Stop recording"
                   : hasContent
-                  ? "Send"
+                  ? "Send message"
                   : onToggleLive
                   ? "Live voice mode"
-                  : "Voice"
+                  : "Voice message"
               }
             >
-              {isLoading ? (
-                <Square className="h-4 w-4 fill-[#1F2023] animate-pulse" />
-              ) : listening ? (
-                <StopCircle className="h-5 w-5 text-red-500" />
-              ) : hasContent ? (
-                <ArrowUp className="h-4 w-4 text-[#1F2023]" />
-              ) : onToggleLive ? (
-                <AudioLines className="h-4 w-4" />
-              ) : (
-                <Mic className="h-5 w-5 text-[#1F2023] transition-colors" />
-              )}
-            </Button>
-          </PromptInputAction>
+              <Button
+                variant="default"
+                size="icon"
+                className={cn(
+                  "h-8 w-8 rounded-full transition-all duration-200",
+                  listening
+                    ? "bg-transparent text-red-500 hover:bg-gray-600/30 hover:text-red-400"
+                    : hasContent
+                    ? "bg-white text-[#1F2023] hover:bg-white/80"
+                    : onToggleLive
+                    ? "bg-brand text-[#211d19] hover:bg-brand-bright"
+                    : "bg-transparent text-[#9CA3AF] hover:bg-gray-600/30 hover:text-[#D1D5DB]",
+                )}
+                onClick={() => {
+                  if (listening) {
+                    onEndVoice?.();
+                  } else if (hasContent) {
+                    handleSubmit();
+                  } else if (onToggleLive) {
+                    onToggleLive?.();
+                  } else {
+                    onBeginVoice?.();
+                  }
+                }}
+                disabled={isLoading && !hasContent}
+                aria-label={
+                  isLoading
+                    ? "Stop generation"
+                    : listening
+                    ? "Stop recording"
+                    : hasContent
+                    ? "Send"
+                    : onToggleLive
+                    ? "Live voice mode"
+                    : "Voice"
+                }
+              >
+                {isLoading ? (
+                  <Square className="h-4 w-4 fill-[#1F2023] animate-pulse" />
+                ) : listening ? (
+                  <StopCircle className="h-5 w-5 text-red-500" />
+                ) : hasContent ? (
+                  <ArrowUp className="h-4 w-4 text-[#1F2023]" />
+                ) : onToggleLive ? (
+                  <AudioLines className="h-4 w-4 text-[#211d19]" />
+                ) : (
+                  <Mic className="h-5 w-5 text-[#1F2023] transition-colors" />
+                )}
+              </Button>
+            </PromptInputAction>
+          </div>
         </PromptInputActions>
       </PromptInput>
 

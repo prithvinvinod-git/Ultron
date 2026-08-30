@@ -1,8 +1,10 @@
 "use client";
 
-import { Check, Loader2, Square, TriangleAlert, Volume2, X } from "lucide-react";
+import { BrainCog, Square, TriangleAlert, Volume2 } from "lucide-react";
 import { Markdown } from "@/app/components/chat/markdown";
 import { cn } from "@/lib/utils";
+import { ThinkingState, type TraceNode } from "@/components/ui/ai-agent-response";
+import { ThinkingOrb } from "@/components/ui/thinking-orbs";
 
 export interface ToolStepUI {
   toolCallId: string;
@@ -35,6 +37,16 @@ export function MessageBubble({
 }) {
   const isUser = message.role === "user";
 
+  const hasThinking = !!message.thinking;
+  const hasTools = (message.toolSteps?.length ?? 0) > 0;
+  const timeline = buildTimeline(message);
+  // Pure-reasoning phase (no tools yet): a compact orb + the raw reasoning text.
+  const showOrbBox = message.streaming && hasThinking && !hasTools;
+  // Agent tool-timeline — live while streaming (web search / tool calls / tasks),
+  // settled once the message finishes.
+  const showTimeline =
+    !!timeline && (!message.streaming || hasTools);
+
   return (
     <div className="animate-rise flex w-full gap-3">
       {!isUser && (
@@ -57,10 +69,11 @@ export function MessageBubble({
           </div>
         ) : (
           <>
-            {message.thinking ? (
+            {/* Pure-reasoning streaming phase (no tools yet): animated orb + thinking text */}
+            {showOrbBox ? (
               <div className="max-w-[85%] rounded-xl bg-surface/80 px-3 py-2 text-xs text-mist">
-                <span className="mb-1 flex items-center gap-1.5 font-medium text-graphite">
-                  <Loader2 size={12} className="animate-spin" />
+                <span className="mb-1 flex items-center gap-2 font-medium text-graphite">
+                  <ThinkingOrb state="composing" size={20} theme="dark" />
                   Thinking
                 </span>
                 <div className="max-h-28 overflow-y-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed opacity-80">
@@ -69,40 +82,15 @@ export function MessageBubble({
               </div>
             ) : null}
 
-            {message.toolSteps?.length ? (
-              <div className="flex max-w-[85%] flex-col gap-1">
-                {message.toolSteps.map((step, i) => (
-                  <div
-                    key={`${step.toolCallId}-${i}`}
-                    className="flex items-start gap-2 rounded-xl border border-border bg-surface/70 px-3 py-1.5 text-xs"
-                    title={step.result ?? step.error}
-                  >
-                    {step.state === "running" && (
-                      <Loader2 size={13} className="mt-0.5 animate-spin text-brand-bright" />
-                    )}
-                    {step.state === "done" && (
-                      <Check size={13} className="mt-0.5 text-good" />
-                    )}
-                    {step.state === "error" && (
-                      <X size={13} className="mt-0.5 text-bad" />
-                    )}
-                    <span className="min-w-0">
-                      <span className="font-medium text-ink">
-                        {step.state === "error"
-                          ? `${step.name} failed`
-                          : step.name.replace(/_/g, " ")}
-                      </span>
-                      {step.result && step.state === "done" && (
-                        <span className="ml-2 line-clamp-2 text-mist">
-                          {truncate(step.result, 160)}
-                        </span>
-                      )}
-                      {step.error && (
-                        <span className="ml-2 line-clamp-2 text-bad">{step.error}</span>
-                      )}
-                    </span>
-                  </div>
-                ))}
+            {/* Agent tool-timeline — live while streaming (tools/searching), settled after done */}
+            {showTimeline && timeline ? (
+              <div className="max-w-[85%]">
+                <ThinkingState
+                  nodes={timeline}
+                  autoPlay={false}
+                  defaultExpanded={message.streaming}
+                  workingLabel="Working..."
+                />
               </div>
             ) : null}
 
@@ -110,11 +98,15 @@ export function MessageBubble({
               {message.text ? (
                 <Markdown>{message.text}</Markdown>
               ) : message.streaming ? (
-                <span className="flex items-center gap-1 py-1 text-sm text-mist">
-                  <span className="h-1.5 w-1.5 animate-breathe rounded-full bg-brand-bright" />
-                  <span className="h-1.5 w-1.5 animate-breathe rounded-full bg-brand-bright [animation-delay:0.2s]" />
-                  <span className="h-1.5 w-1.5 animate-breathe rounded-full bg-brand-bright [animation-delay:0.4s]" />
-                </span>
+                // While streaming, the thinking orbs are the live "working" indicator
+                // (used in both chat and hands-free live mode). Hidden when a thinking
+                // box or tool timeline is already communicating progress.
+                !showOrbBox && !showTimeline ? (
+                  <span className="flex items-center gap-2 py-1 text-sm text-graphite">
+                    <ThinkingOrb state="working" size={20} theme="dark" />
+                    Working
+                  </span>
+                ) : null
               ) : (
                 <span className="text-sm text-mist">No response.</span>
               )}
@@ -123,7 +115,13 @@ export function MessageBubble({
             {(message.provider || message.streaming) && (
               <div className="mt-0.5 flex items-center gap-2 text-[11px] text-mist">
                 {message.streaming ? (
-                  <span>streaming…</span>
+                  <span className="flex items-center gap-1.5">
+                    <ThinkingOrb state="working" size={20} theme="dark" />
+                    <span>
+                      {message.provider?.toUpperCase() ?? ""}
+                      {message.model ? ` · ${message.model}` : ""}
+                    </span>
+                  </span>
                 ) : (
                   <>
                     <span>
@@ -158,6 +156,145 @@ export function MessageBubble({
       </div>
     </div>
   );
+}
+
+function buildTimeline(message: MessageUI): TraceNode[] | null {
+  const nodes: TraceNode[] = [];
+
+  if (message.thinking) {
+    nodes.push({
+      type: "reasoning",
+      sentences: splitSentences(message.thinking, 6),
+      durationSeconds: Math.max(1, Math.round(message.thinking.length / 90)),
+    });
+  }
+
+  for (const step of message.toolSteps ?? []) {
+    const { state, name, result, error } = step;
+    const looksLikeCommand =
+      name === "execute_command" ||
+      /(^|\s)((npm|yarn|npx|pnpm|tsc|node|git|kubectl|python|curl)\s)/.test(name);
+    const isSearch = name === "search_web" || /search|web|lookup|query/.test(name);
+    const isMemory = name === "recall_memories" || name === "store_memory" || /memor/.test(name);
+
+    // A task/step that failed — show as a failed tool node regardless of kind.
+    if (state === "error") {
+      nodes.push({
+        type: "tool",
+        toolName: name,
+        status: "failed",
+        primary: name.replace(/_/g, " "),
+        secondary: truncate(error ?? "failed", 60),
+        details: error ? [{ text: error, tone: "error" }] : undefined,
+      });
+      continue;
+    }
+
+    // Terminal / shell command execution.
+    if (looksLikeCommand) {
+      nodes.push({
+        type: "terminal",
+        status: state === "running" ? "running" : "completed",
+        command: name.replace(/^execute_command\s*/, ""),
+        exitCode: 0,
+        output: result,
+        details: result
+          ? [
+              { text: `command: ${name.replace(/^execute_command\s*/, "")}`, tone: "muted" },
+              ...(result ? [{ text: truncate(result, 400), tone: "ctx" as const }] : []),
+            ]
+          : undefined,
+      });
+      continue;
+    }
+
+    // Agentic web search.
+    if (isSearch) {
+      nodes.push({
+        type: "search",
+        toolName: "search_web",
+        status: state === "running" ? "running" : state === "done" ? "completed" : "completed",
+        primary: "Web search",
+        secondary:
+          state === "running"
+            ? "Searching the web…"
+            : state === "done" && result
+            ? truncate(result, 64)
+            : "Search completed",
+        details:
+          state === "done" && result
+            ? result
+                .split("\n")
+                .filter((l) => l.trim().length > 0)
+                .slice(0, 6)
+                .map((line) => ({ text: truncate(line, 160), tone: "ctx" as const }))
+            : undefined,
+      });
+      continue;
+    }
+
+    // Memory recall / store.
+    if (isMemory) {
+      const isRecall = name === "recall_memories";
+      nodes.push({
+        type: "tool",
+        toolName: name,
+        icon: BrainCog,
+        status: state === "running" ? "running" : "completed",
+        primary: isRecall ? "Recalling memories" : "Saving memory",
+        secondary:
+          state === "running"
+            ? "Working…"
+            : state === "done" && result
+            ? truncate(result, 60)
+            : "Done",
+        details:
+          state === "done" && result
+            ? result
+                .split("\n")
+                .filter((l) => l.trim().length > 0)
+                .slice(0, 5)
+                .map((line) => ({ text: truncate(line, 140), tone: "ctx" as const }))
+            : undefined,
+      });
+      continue;
+    }
+
+    // Generic utility / tool call (time, calculate, system info, etc.).
+    nodes.push({
+      type: "tool",
+      toolName: name,
+      status: state === "running" ? "running" : "completed",
+      primary: name.replace(/_/g, " "),
+      secondary:
+        state === "running"
+          ? "running…"
+          : state === "done" && result
+          ? truncate(result, 60)
+          : "completed",
+      details:
+        state === "done" && result
+          ? result
+              .split("\n")
+              .filter((l) => l.trim().length > 0)
+              .slice(0, 8)
+              .map((line) => ({
+                text: truncate(line, 140),
+                tone: "ctx" as const,
+              }))
+          : undefined,
+    });
+  }
+
+  return nodes.length > 0 ? nodes : null;
+}
+
+function splitSentences(text: string, max: number): string[] {
+  const lines = text
+    .split(/\n+|\\.\\s+|(?<=[.!?])\\s+/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  return lines.slice(0, max);
 }
 
 function truncate(text: string, max: number): string {

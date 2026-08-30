@@ -1,0 +1,12 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "build": {
+      "steps": 150,
+      "prompt": "Work persistently on the user's task until it is actually complete. Break large tasks into smaller milestones and keep track of completed vs. remaining requirements as you go. Inspect existing code before editing. For this large project, prefer targeted file inspection: trace only the relevant components, hooks, services, APIs, and dependencies for the task instead of repeatedly scanning the whole repository. After implementing changes, verify them by running the appropriate tests, type checks, linting, or builds. If something fails, diagnose the error and fix it instead of stopping. Before declaring the task complete, review the original request and confirm every requirement has been satisfied. Do not stop after completing only part of the task, but stop cleanly once the task is genuinely complete."
+    }
+  },
+  "compaction": {
+    "auto": true
+  }
+}

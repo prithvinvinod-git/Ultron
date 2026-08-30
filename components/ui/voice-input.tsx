@@ -43,7 +43,7 @@ export function VoiceInput({
     <div className={cn("flex flex-col items-center justify-center", className)}>
       <motion.div
         className={cn(
-          "flex cursor-pointer select-none items-center justify-center rounded-full border p-2 transition-colors",
+          "flex cursor-pointer select-none items-center justify-center rounded-full border p-1.5 transition-colors",
           listening
             ? "border-brand/50 bg-brand/15"
             : "border-border hover:border-border-strong hover:bg-surface-2",
@@ -58,10 +58,10 @@ export function VoiceInput({
         aria-label={listening ? "Listening… click to stop" : "Click to talk"}
         title={listening ? "Listening… click to stop" : "Click to talk"}
       >
-        <div className="flex h-6 w-6 items-center justify-center">
+        <div className="flex h-5 w-5 items-center justify-center">
           {listening ? (
             <motion.div
-              className="h-4 w-4 rounded-sm bg-brand"
+              className="h-3.5 w-3.5 rounded-sm bg-brand"
               animate={{
                 rotate: [0, 180, 360],
               }}
@@ -72,7 +72,7 @@ export function VoiceInput({
               }}
             />
           ) : (
-            <Mic className="text-brand-bright" />
+            <Mic className="h-3.5 w-3.5 text-brand-bright" />
           )}
         </div>
         <AnimatePresence mode="wait">

@@ -28,9 +28,24 @@ function blobToBase64(blob: Blob): Promise<string> {
 export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [voiceKey, setVoiceKeyState] = useState<string>(() => {
+    if (typeof window === "undefined") return "aria";
+    return localStorage.getItem("ultron.tts.voice") || "aria";
+  });
   const mediaRef = useRef<MediaRecorder | null>(null);
   const uploadStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const voiceKeyRef = useRef(voiceKey);
+
+  const setVoiceKey = useCallback((key: string) => {
+    setVoiceKeyState(key);
+    voiceKeyRef.current = key;
+    try {
+      localStorage.setItem("ultron.tts.voice", key);
+    } catch {
+      // ignore storage errors (private mode etc.)
+    }
+  }, []);
 
   const stopSpeaking = useCallback(() => {
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
@@ -59,7 +74,10 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
         const res = await fetch("/api/voice/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: clean.slice(0, 3900) }),
+          body: JSON.stringify({
+            text: clean.slice(0, 3900),
+            voice: voiceKeyRef.current,
+          }),
         });
         if (res.ok) {
           const blob = await res.blob();
@@ -113,8 +131,11 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
         if (gen !== liveGenRef.current) return;
         if (data.ok && data.text) {
           onTranscript(data.text.trim());
-        } else if (!isLive && data.error) {
-          onError?.(data.error);
+        } else if (!isLive) {
+          // A final clip that produced no speech: insert a period so the field
+          // isn't left silently empty (the user can review/clear it).
+          if (data.error) onError?.(data.error);
+          onTranscript(".");
         }
       } catch {
         // ignore transient errors on live ticks; end-of-recording handles errors
@@ -250,5 +271,7 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
     speak,
     stopSpeaking,
     cleanupStreams,
+    voiceKey,
+    setVoiceKey,
   };
 }

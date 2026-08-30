@@ -18,6 +18,26 @@
   --color-warn: #e0b24e;
   --color-bad: #e06c5c;
 
+  --color-background: #1a1714;
+  --color-foreground: #f4f1ea;
+  --color-card: #211d19;
+  --color-card-foreground: #f4f1ea;
+  --color-popover: #2a251f;
+  --color-popover-foreground: #f4f1ea;
+  --color-primary: #d97757;
+  --color-primary-foreground: #1a1714;
+  --color-secondary: #332c25;
+  --color-secondary-foreground: #f4f1ea;
+  --color-muted: #2a251f;
+  --color-muted-foreground: #8f877a;
+  --color-accent: #332c25;
+  --color-accent-foreground: #f4f1ea;
+  --color-destructive: #e06c5c;
+  --color-destructive-foreground: #1a1714;
+  --color-border: #3a332b;
+  --color-input: #3a332b;
+  --color-ring: #d97757;
+
   --font-sans: var(--font-space-grotesk), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
 

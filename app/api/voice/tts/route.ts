@@ -20,7 +20,7 @@ export async function POST(request: Request) {
   if (!speech) {
     return jsonError(
       503,
-      "No TTS engine configured (set GROQ_API_KEY or LiveKit credentials). The client can fall back to the browser speech synthesizer.",
+      "TTS synthesis failed. The client can fall back to the browser speech synthesizer.",
       { fallback: "browser" },
     );
   }
