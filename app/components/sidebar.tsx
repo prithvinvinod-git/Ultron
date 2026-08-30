@@ -170,19 +170,14 @@ export function Sidebar({
           })}
         </nav>
 
-        {/* Recent sessions */}
-        <div className="mt-5 min-h-0 flex-1 overflow-y-auto border-t border-border pt-3">
-          <div
-            className={cn(
-              "pb-2 text-[11px] font-semibold uppercase tracking-wider text-mist",
-              collapsed ? "px-2 text-center" : "px-4",
-            )}
-          >
-            {collapsed ? "Recent" : "Recent sessions"}
-          </div>
+        {/* Recent sessions — hidden entirely when the rail is collapsed */}
+        {!collapsed && (
+          <div className="mt-5 min-h-0 flex-1 overflow-y-auto border-t border-border pt-3">
+            <div className="px-4 pb-2 text-[11px] font-semibold uppercase tracking-wider text-mist">
+              Recent sessions
+            </div>
 
-          {!collapsed &&
-            (sessions.length === 0 ? (
+            {sessions.length === 0 ? (
               <div className="px-4 py-2 text-xs text-mist">
                 No conversations yet.
               </div>
@@ -211,26 +206,12 @@ export function Sidebar({
                   </div>
                 ))}
               </div>
-            ))}
+            )}
+          </div>
+        )}
 
-          {/* Collapsed: icon-only session entries */}
-          {collapsed &&
-            sessions.map((s) => (
-              <div
-                key={s.id}
-                className="flex items-center justify-center px-2 py-1"
-              >
-                <Link
-                  href={`/?s=${s.id}`}
-                  onClick={onCloseMobile}
-                  className="flex w-9 items-center justify-center rounded-[10px] py-2 text-graphite transition hover:bg-surface-2/60 hover:text-ink"
-                  title={s.title || "New conversation"}
-                >
-                  <MessageSquare size={15} className="shrink-0" />
-                </Link>
-              </div>
-            ))}
-        </div>
+        {/* Collapsed: flex spacer keeps the status footer pinned to the bottom */}
+        {collapsed && <div className="min-h-0 flex-1" />}
 
         <div className="border-t border-border py-3">
           <div

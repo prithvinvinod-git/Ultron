@@ -71,6 +71,7 @@ export function useLiveSession({
   const restartTimerRef = useRef<number | null>(null);
   const speakStartedAtRef = useRef(0);
   const recognitionRef = useRef<NativeRecognition | null>(null);
+  const micPausedRef = useRef(false);
 
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -98,6 +99,36 @@ export function useLiveSession({
     setStatus(next);
   }, []);
 
+  // Pause microphone capture / recognition while the assistant is speaking so
+  // it can't transcribe its own voice back into the conversation (echo).
+  const pauseMic = useCallback(() => {
+    micPausedRef.current = true;
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch {
+        // ignore
+      }
+      recognitionRef.current = null;
+    }
+  }, []);
+
+  const resumeMic = useCallback(() => {
+    // Settle window: the tail of the assistant's speech can briefly bleed into
+    // the mic after playback ends, so re-arm STT a moment later.
+    window.setTimeout(() => {
+      micPausedRef.current = false;
+      if (
+        activeRef.current &&
+        !stoppingRef.current &&
+        statusRef.current === "listening" &&
+        !recognitionRef.current
+      ) {
+        if (getNativeRecognition()) startRecognition();
+      }
+    }, 700);
+  }, [startRecognition]);
+
   const handleTurn = useCallback(
     async (text: string): Promise<boolean> => {
       const clean = text.trim();
@@ -111,7 +142,12 @@ export function useLiveSession({
         if (reply && reply.trim()) {
           setStatusSafe("speaking");
           speakStartedAtRef.current = Date.now();
-          await speakRef.current(reply);
+          pauseMic();
+          try {
+            await speakRef.current(reply);
+          } finally {
+            resumeMic();
+          }
         }
         if (!activeRef.current) return true;
         setStatusSafe("listening");
@@ -121,7 +157,7 @@ export function useLiveSession({
       }
       return true;
     },
-    [setStatusSafe],
+    [setStatusSafe, pauseMic, resumeMic],
   );
 
   const flushQueued = useCallback(async () => {
@@ -211,7 +247,13 @@ export function useLiveSession({
   const startFallback = useCallback(async () => {
     if (!activeRef.current || stoppingRef.current) return;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       streamRef.current = stream;
       const Ctx =
         window.AudioContext ??
@@ -227,7 +269,7 @@ export function useLiveSession({
       startRecorder();
       vadIdRef.current = window.setInterval(() => {
         if (!activeRef.current || !analyserRef.current) return;
-        if (statusRef.current !== "listening") {
+        if (micPausedRef.current || statusRef.current !== "listening") {
           speechActiveRef.current = false;
           lastSpeechAtRef.current = null;
           return;
@@ -257,8 +299,9 @@ export function useLiveSession({
     }
   }, [startRecorder, setStatusSafe]);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- hoisted function declaration, identity changes per render (kept as-is)
   function startRecognition() {
-    if (!activeRef.current || stoppingRef.current) return;
+    if (!activeRef.current || stoppingRef.current || micPausedRef.current) return;
     const SR = getNativeRecognition();
     if (!SR) {
       void startFallback();
@@ -301,6 +344,7 @@ export function useLiveSession({
       if (
         activeRef.current &&
         !stoppingRef.current &&
+        !micPausedRef.current &&
         restartTimerRef.current === null
       ) {
         restartTimerRef.current = window.setTimeout(() => {

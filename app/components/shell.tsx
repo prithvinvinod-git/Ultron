@@ -25,14 +25,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   // Restore the persisted desktop collapse preference once available.
   useEffect(() => {
-    let stored: string | null = null;
-    try {
-      stored = window.localStorage.getItem(STORAGE_KEY);
-    } catch {
-      /* ignore */
-    }
-    if (stored === "1") setCollapsed(true);
-    setMounted(true);
+    const id = window.setTimeout(() => {
+      let stored: string | null = null;
+      try {
+        stored = window.localStorage.getItem(STORAGE_KEY);
+      } catch {
+        /* ignore */
+      }
+      if (stored === "1") setCollapsed(true);
+      setMounted(true);
+    }, 0);
+    return () => window.clearTimeout(id);
   }, []);
 
   // Persist desktop collapse preference.

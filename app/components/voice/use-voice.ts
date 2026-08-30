@@ -19,11 +19,32 @@ function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
+type NativeRecognition = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+  onresult: ((e: unknown) => void) | null;
+  onend: (() => void) | null;
+  onerror: ((e: unknown) => void) | null;
+};
+
+function getNativeRecognition(): (new () => NativeRecognition) | undefined {
+  const w = window as unknown as {
+    SpeechRecognition?: new () => NativeRecognition;
+    webkitSpeechRecognition?: new () => NativeRecognition;
+  };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition;
+}
+
 /**
- * Push-to-talk voice. Records audio with the browser's MediaRecorder and
- * transcribes it via the /api/voice/asr endpoint (Groq Whisper) for reliable,
- * accurate transcription into the composer. Speaking uses /api/voice/tts
- * first, then the browser synthesizer.
+ * Push-to-talk voice. Transcribes with the browser's Web Speech API
+ * (SpeechRecognition) — no server / GROQ_API_KEY required. Browsers without
+ * Web Speech support (e.g. Firefox) fall back to MediaRecorder + the
+ * /api/voice/asr endpoint. Speaking uses /api/voice/tts first, then the
+ * browser synthesizer.
  */
 export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
   const [listening, setListening] = useState(false);
@@ -35,7 +56,14 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
   const mediaRef = useRef<MediaRecorder | null>(null);
   const uploadStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const recognitionRef = useRef<NativeRecognition | null>(null);
+  const finalRef = useRef("");
+  const interimRef = useRef("");
+  const skipPlaceholderRef = useRef(false);
   const voiceKeyRef = useRef(voiceKey);
+  const speakingResolveRef = useRef<(() => void) | null>(null);
+  const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const speakCancelledRef = useRef(false);
 
   const setVoiceKey = useCallback((key: string) => {
     setVoiceKeyState(key);
@@ -47,29 +75,52 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
     }
   }, []);
 
-  const stopSpeaking = useCallback(() => {
-    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  const resolveSpeaking = useCallback(() => {
     setSpeaking(false);
+    activeAudioRef.current = null;
+    const resolve = speakingResolveRef.current;
+    speakingResolveRef.current = null;
+    resolve?.();
   }, []);
 
+  const stopSpeaking = useCallback(() => {
+    speakCancelledRef.current = true;
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    const audio = activeAudioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+      try {
+        audio.load();
+      } catch {
+        // ignore
+      }
+    }
+    resolveSpeaking();
+  }, [resolveSpeaking]);
+
   const speakBrowser = useCallback(
-    (text: string) => {
-      if (!("speechSynthesis" in window)) return;
+    (text: string): Promise<void> => {
+      if (!("speechSynthesis" in window)) return Promise.resolve();
       window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1.02;
-      utterance.onend = () => setSpeaking(false);
-      utterance.onerror = () => setSpeaking(false);
-      setSpeaking(true);
-      window.speechSynthesis.speak(utterance);
+      return new Promise<void>((resolve) => {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 1.02;
+        speakingResolveRef.current = resolve;
+        utterance.onend = () => resolveSpeaking();
+        utterance.onerror = () => resolveSpeaking();
+        setSpeaking(true);
+        window.speechSynthesis.speak(utterance);
+      });
     },
-    [],
+    [resolveSpeaking],
   );
 
   const speak = useCallback(
     async (text: string) => {
       const clean = text.trim();
       if (!clean) return;
+      speakCancelledRef.current = false;
       try {
         const res = await fetch("/api/voice/tts", {
           method: "POST",
@@ -80,32 +131,39 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
           }),
         });
         if (res.ok) {
+          if (speakCancelledRef.current) return;
           const blob = await res.blob();
           const url = URL.createObjectURL(blob);
           const audio = new Audio(url);
+          activeAudioRef.current = audio;
           setSpeaking(true);
-          audio.onended = () => {
-            setSpeaking(false);
-            URL.revokeObjectURL(url);
-          };
-          audio.onerror = () => {
-            setSpeaking(false);
-            URL.revokeObjectURL(url);
-            speakBrowser(clean);
-          };
-          await audio.play();
+          // Resolve only when playback actually ends so callers (live mode)
+          // don't re-arm the microphone while the assistant is still talking.
+          await new Promise<void>((resolve) => {
+            speakingResolveRef.current = resolve;
+            audio.onended = () => resolveSpeaking();
+            audio.onerror = () => {
+              resolveSpeaking();
+              if (!speakCancelledRef.current) void speakBrowser(clean);
+            };
+            void audio.play().catch(() => {
+              resolveSpeaking();
+              if (!speakCancelledRef.current) void speakBrowser(clean);
+            });
+          });
           return;
         }
       } catch {
         // fall through to browser TTS
       }
-      speakBrowser(clean);
+      await speakBrowser(clean);
     },
-    [speakBrowser],
+    [resolveSpeaking, speakBrowser],
   );
 
   const liveGenRef = useRef(0);
 
+  // Server fallback only: transcribe a recorded clip via /api/voice/asr.
   const transcribeBlob = useCallback(
     async (blob: Blob, mime: string, isLive: boolean) => {
       if (!blob.size) return;
@@ -144,12 +202,114 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
     [onTranscript, onError],
   );
 
-  const begin = useCallback(async () => {
-    if (listening) return;
-    stopSpeaking();
+  // Commit whatever was captured and hand it to the composer.
+  const finalizeCapture = useCallback(() => {
+    liveGenRef.current += 1; // invalidate any in-flight server fallback tick
+    setListening(false);
+    const text =
+      finalRef.current +
+      (interimRef.current
+        ? (finalRef.current ? " " : "") + interimRef.current
+        : "");
+    const skipPlaceholder = skipPlaceholderRef.current;
+    skipPlaceholderRef.current = false;
+    finalRef.current = "";
+    interimRef.current = "";
+    if (text.trim()) {
+      onTranscript(text.trim());
+    } else if (!skipPlaceholder) {
+      // No speech was captured: insert a period so the field isn't left
+      // silently empty (the user can review/clear it).
+      onTranscript(".");
+    }
+  }, [onTranscript]);
 
+  const stopRecognition = useCallback(() => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch {
+        // ignore
+      }
+      recognitionRef.current = null;
+    }
+  }, []);
+
+  // Primary path: browser Web Speech API (SpeechRecognition). No server call,
+  // so transcription works without GROQ_API_KEY.
+  const startWebSpeech = useCallback(() => {
+    const SR = getNativeRecognition();
+    if (!SR) return false;
+    finalRef.current = "";
+    interimRef.current = "";
+    skipPlaceholderRef.current = false;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recognition = new SR();
+      recognition.lang = "en-US";
+      recognition.continuous = false;
+      recognition.interimResults = true;
+
+      recognition.onresult = (ev) => {
+        const e = ev as {
+          resultIndex: number;
+          results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>;
+        };
+        let finals = "";
+        let interim = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const text = e.results[i][0].transcript;
+          if (e.results[i].isFinal) finals += (finals ? " " : "") + text;
+          else interim += text;
+        }
+        if (finals) {
+          finalRef.current = finalRef.current.trim()
+            ? `${finalRef.current.trim()} ${finals.trim()}`
+            : finals.trim();
+        }
+        interimRef.current = interim;
+        const combined =
+          finalRef.current + (interim ? (finalRef.current ? " " : "") + interim : "");
+        if (combined.trim()) onTranscript(combined.trim());
+      };
+
+      recognition.onerror = (ev) => {
+        const e = ev as { error?: string };
+        // Permission problems: stop cleanly and surface the error. Other
+        // errors ('no-speech', 'aborted', …) are finalized in onend.
+        if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+          skipPlaceholderRef.current = true;
+          stopRecognition();
+          onError?.("Microphone access denied.");
+        }
+      };
+
+      recognition.onend = () => {
+        recognitionRef.current = null;
+        finalizeCapture();
+      };
+
+      recognition.start();
+      recognitionRef.current = recognition;
+      setListening(true);
+      return true;
+    } catch (err) {
+      console.error("[voice] Web Speech start failed", err);
+      stopRecognition();
+      return false;
+    }
+  }, [onTranscript, onError, stopRecognition, finalizeCapture]);
+
+  // Fallback for browsers without the Web Speech API: MediaRecorder + the
+  // server ASR endpoint (works when GROQ_API_KEY is configured).
+  const beginFallback = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
       uploadStreamRef.current = stream;
       const track = stream.getAudioTracks()[0];
       console.log("[voice] mic device", {
@@ -182,7 +342,8 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
         "audio/mp4",
       ];
       const mime = mimes.find(
-        (m) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m),
+        (m) =>
+          typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m),
       );
       const options = mime ? { mimeType: mime } : undefined;
       const recorder = new MediaRecorder(stream, options);
@@ -237,19 +398,39 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
       recorder.start(250);
       mediaRef.current = recorder;
       setListening(true);
-    } catch (err) {
+    } catch {
       onError?.("Microphone access denied.");
-      console.error("[voice] start failed", err);
       setListening(false);
     }
-  }, [listening, onError, stopSpeaking, transcribeBlob]);
+  }, [onError, transcribeBlob]);
+
+  const begin = useCallback(async () => {
+    if (listening) return;
+    stopSpeaking();
+    setListening(true);
+
+    // Prefer the browser Web Speech API so transcription works without a
+    // server round-trip (no GROQ_API_KEY needed).
+    if (startWebSpeech()) return;
+
+    // Browsers without SpeechRecognition fall back to recording + server ASR.
+    await beginFallback();
+  }, [listening, stopSpeaking, startWebSpeech, beginFallback]);
 
   const end = useCallback(() => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      return;
+    }
     if (mediaRef.current && mediaRef.current.state === "recording") {
       mediaRef.current.stop();
-    } else {
-      setListening(false);
+      return;
     }
+    setListening(false);
   }, []);
 
   const toggle = useCallback(() => {
@@ -258,9 +439,10 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
   }, [listening, begin, end]);
 
   const cleanupStreams = useCallback(() => {
+    stopRecognition();
     uploadStreamRef.current?.getTracks().forEach((t) => t.stop());
     uploadStreamRef.current = null;
-  }, []);
+  }, [stopRecognition]);
 
   return {
     listening,

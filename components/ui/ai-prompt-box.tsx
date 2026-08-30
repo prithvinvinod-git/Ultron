@@ -10,9 +10,7 @@ import {
   X,
   StopCircle,
   Mic,
-  Globe,
   BrainCog,
-  FolderCode,
   AudioLines,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -450,9 +448,7 @@ export const PromptInputBox = React.forwardRef<
   const [filePreviews, setFilePreviews] = React.useState<{ [key: string]: string }>({});
   const [selectedImage, setSelectedImage] = React.useState<string | null>(null);
   const [recTime, setRecTime] = React.useState(0);
-  const [showSearch, setShowSearch] = React.useState(false);
   const [showThink, setShowThink] = React.useState(false);
-  const [showCanvas, setShowCanvas] = React.useState(false);
   const uploadInputRef = React.useRef<HTMLInputElement>(null);
   const promptBoxRef = React.useRef<HTMLDivElement>(null);
 
@@ -477,17 +473,7 @@ export const PromptInputBox = React.forwardRef<
     };
   }, [listening]);
 
-  const handleToggleChange = (value: string) => {
-    if (value === "search") {
-      setShowSearch((prev) => !prev);
-      setShowThink(false);
-    } else if (value === "think") {
-      setShowThink((prev) => !prev);
-      setShowSearch(false);
-    }
-  };
-
-  const handleCanvasToggle = () => setShowCanvas((prev) => !prev);
+  const handleToggleThink = () => setShowThink((prev) => !prev);
 
   const isImageFile = (file: File) => file.type.startsWith("image/");
 
@@ -556,10 +542,7 @@ export const PromptInputBox = React.forwardRef<
 
   const handleSubmit = () => {
     if (value.trim() || files.length > 0) {
-      let messagePrefix = "";
-      if (showSearch) messagePrefix = "[Search: ";
-      else if (showThink) messagePrefix = "[Think: ";
-      else if (showCanvas) messagePrefix = "[Canvas: ";
+      const messagePrefix = showThink ? "[Think: " : "";
       const formattedInput = messagePrefix ? `${messagePrefix}${value}]` : value;
       onSend(formattedInput, files);
       setValue("");
@@ -623,20 +606,12 @@ export const PromptInputBox = React.forwardRef<
 
         <div className="transition-all duration-300">
           <PromptInputTextarea
-            placeholder={
-              showSearch
-                ? "Search the web..."
-                : showThink
-                ? "Think deeply..."
-                : showCanvas
-                ? "Create on canvas..."
-                : placeholder
-            }
+            placeholder={showThink ? "Think deeply..." : placeholder}
             className="text-base"
           />
         </div>
 
-        <PromptInputActions className="flex items-center justify-between gap-2 p-0 pt-2">
+        <PromptInputActions className="flex flex-wrap items-center justify-between gap-2 p-0 pt-2">
           <div
             className={cn(
               "flex items-center gap-1 transition-opacity duration-300",
@@ -664,46 +639,12 @@ export const PromptInputBox = React.forwardRef<
               </button>
             </PromptInputAction>
 
-            <div className="flex items-center">
-              <button
-                type="button"
-                onClick={() => handleToggleChange("search")}
-                className={cn(
-                  "flex h-8 items-center gap-1 rounded-full border px-2 py-1 transition-all",
-                  showSearch
-                    ? "border-[#1EAEDB] bg-[#1EAEDB]/15 text-[#1EAEDB]"
-                    : "border-transparent bg-transparent text-[#9CA3AF] hover:text-[#D1D5DB]",
-                )}
-              >
-                <div className="flex h-5 w-5 flex-shrink-0 items-center justify-center">
-                  <motion.div
-                    animate={{ rotate: showSearch ? 360 : 0, scale: showSearch ? 1.1 : 1 }}
-                    whileHover={{ rotate: showSearch ? 360 : 15, scale: 1.1 }}
-                    transition={{ type: "spring", stiffness: 260, damping: 25 }}
-                  >
-                    <Globe className={cn("h-4 w-4", showSearch ? "text-[#1EAEDB]" : "text-inherit")} />
-                  </motion.div>
-                </div>
-                <AnimatePresence>
-                  {showSearch && (
-                    <motion.span
-                      initial={{ width: 0, opacity: 0 }}
-                      animate={{ width: "auto", opacity: 1 }}
-                      exit={{ width: 0, opacity: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className="flex-shrink-0 overflow-hidden text-xs whitespace-nowrap text-[#1EAEDB]"
-                    >
-                      Search
-                    </motion.span>
-                  )}
-                </AnimatePresence>
-              </button>
-
+            {/* Think toggle — mobile only so the desktop composer stays minimal */}
+            <div className="flex items-center md:hidden">
               <CustomDivider />
-
               <button
                 type="button"
-                onClick={() => handleToggleChange("think")}
+                onClick={handleToggleThink}
                 className={cn(
                   "flex h-8 items-center gap-1 rounded-full border px-2 py-1 transition-all",
                   showThink
@@ -734,42 +675,6 @@ export const PromptInputBox = React.forwardRef<
                   )}
                 </AnimatePresence>
               </button>
-
-              <CustomDivider />
-
-              <button
-                type="button"
-                onClick={handleCanvasToggle}
-                className={cn(
-                  "flex h-8 items-center gap-1 rounded-full border px-2 py-1 transition-all",
-                  showCanvas
-                    ? "border-[#F97316] bg-[#F97316]/15 text-[#F97316]"
-                    : "border-transparent bg-transparent text-[#9CA3AF] hover:text-[#D1D5DB]",
-                )}
-              >
-                <div className="flex h-5 w-5 flex-shrink-0 items-center justify-center">
-                  <motion.div
-                    animate={{ rotate: showCanvas ? 360 : 0, scale: showCanvas ? 1.1 : 1 }}
-                    whileHover={{ rotate: showCanvas ? 360 : 15, scale: 1.1 }}
-                    transition={{ type: "spring", stiffness: 260, damping: 25 }}
-                  >
-                    <FolderCode className={cn("h-4 w-4", showCanvas ? "text-[#F97316]" : "text-inherit")} />
-                  </motion.div>
-                </div>
-                <AnimatePresence>
-                  {showCanvas && (
-                    <motion.span
-                      initial={{ width: 0, opacity: 0 }}
-                      animate={{ width: "auto", opacity: 1 }}
-                      exit={{ width: 0, opacity: 0 }}
-                      transition={{ duration: 0.2 }}
-                      className="flex-shrink-0 overflow-hidden text-xs whitespace-nowrap text-[#F97316]"
-                    >
-                      Canvas
-                    </motion.span>
-                  )}
-                </AnimatePresence>
-              </button>
             </div>
           </div>
 
@@ -777,7 +682,7 @@ export const PromptInputBox = React.forwardRef<
           <div className="flex items-center gap-1">
             {voices && voices.length > 0 && (
               <PromptInputAction tooltip="Voice">
-                <div className="flex items-center gap-1 rounded-full border border-[#2A2C31] bg-[#1F2023]/70 py-1 pl-2 pr-1 transition-colors hover:border-[#3A3D44]">
+                <div className="hidden items-center gap-1 rounded-full border border-[#2A2C31] bg-[#1F2023]/70 py-1 pl-2 pr-1 transition-colors hover:border-[#3A3D44] sm:flex">
                   <AudioLines className="h-3 w-3 text-brand-bright" />
                   <select
                     value={voiceKey ?? ""}

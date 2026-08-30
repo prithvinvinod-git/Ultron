@@ -452,7 +452,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
           <div
             ref={scrollRef}
             onScroll={onScroll}
-            className="h-full overflow-y-auto px-6 pb-4"
+            className="h-full overflow-y-auto px-4 pb-4 sm:px-6"
           >
             <div className="mx-auto flex max-w-2xl flex-col gap-5 pt-4">
               {showSuggestions && (
@@ -494,7 +494,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
       </div>
 
       {!live && (
-        <div className="relative z-10 mx-auto w-full max-w-2xl px-4 pb-6">
+        <div className="relative z-10 mx-auto w-full max-w-2xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4 sm:pb-6">
           <Composer
             value={draft}
             onValueChange={setDraft}
@@ -509,9 +509,6 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
             voiceKey={voiceKey}
             onVoiceChange={setVoiceKey}
           />
-          <p className="mt-2 text-center text-[11px] text-mist">
-            Agentive · local memory · Gemini / Grok / OpenRouter · voice
-          </p>
         </div>
       )}
     </div>
