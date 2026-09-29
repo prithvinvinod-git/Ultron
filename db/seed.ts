@@ -33,8 +33,10 @@ async function run() {
   console.log(`Seeding into backend: ${store.engine}`);
 
   await store.upsertProviders([
-    { key: "openrouter", label: "OpenRouter", active: true, priority: 1 },
-    { key: "gemini", label: "Google Gemini", active: true, priority: 2 },
+    // Gemini is the primary provider (lowest priority number wins), so the
+    // app never depends on a locally running model server.
+    { key: "gemini", label: "Google Gemini", active: true, priority: 1 },
+    { key: "openrouter", label: "OpenRouter", active: true, priority: 2 },
     { key: "xai", label: "Grok (xAI)", active: true, priority: 3 },
   ]);
 
