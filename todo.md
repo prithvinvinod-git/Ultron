@@ -1488,6 +1488,7 @@ _Appended 2026-09-30. Commits `f01e2ab`, `b0f3509` (both pushed, deployed to htt
 - [x] Enter key sends the prompt (Shift+Enter newline; IME/modifier safe, no double-submit)
 - [x] Delete probe scripts (`probe-*.cjs`) and temp secret artifacts
 - [x] `tsc --noEmit`, `eslint`, and `next build` all clean; production chat returns a real answer
+- [x] Diagnosed the `/memory` 500: Firestore returned `RESOURCE_EXHAUSTED: Quota exceeded.` (free-tier read quota). `lib/store-error.ts` + `storeErrorResponse()` now turn that into a 503 with a readable message instead of an opaque 500, and `/memory` shows it in-page instead of silently rendering empty.
 
 ## Pending
 
@@ -1496,6 +1497,14 @@ _Appended 2026-09-30. Commits `f01e2ab`, `b0f3509` (both pushed, deployed to htt
 - [ ] Fix live streaming of returns (reply text/audio should stream out as it is produced, not only once complete)
 - [ ] Tool calls: show real elapsed time while working (e.g. "worked 12s"), with a live timer per step/turn rather than an indeterminate spinner
 - [ ] Browser-audition voice quality + slash menu, barge-in, and push-to-talk auto-send
+- [x] Fix the API-call overload that burned the quota: the sidebar polled `GET /api/sessions` every 4s and every call ran one `count()` aggregation per session (N+1). Removed the interval (refresh now only on focus / tab re-show / session create+delete) and dropped the per-session counts.
+
+## Deferred (not done now — on purpose)
+
+- [ ] Wrap the remaining store-backed routes (`/api/system`, `/api/chat`, `/api/providers`, …) with `storeErrorResponse()` — they still return a bare 500 when the store is quota-blocked
+- [ ] `messageCount` is now hard-coded to `0` in the Firestore session list (nothing in the UI read it). If a count badge is ever wanted, denormalize a counter onto the session doc instead of aggregating per row
+- [ ] Firestore free-tier quota: upgrade the project to Blaze (or add a budget alert) to remove the daily read cap — the app will hit this again with normal use
+- [ ] Optional resilience: fall back to libSQL/Turso storage when Firestore is quota-blocked, rather than failing the request
 
 ## Notes
 

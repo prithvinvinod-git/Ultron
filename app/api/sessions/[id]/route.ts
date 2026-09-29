@@ -1,5 +1,5 @@
 import { getStore } from "@/db/store";
-import { jsonError } from "@/lib/http";
+import { jsonError, storeErrorResponse } from "@/lib/http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,27 +9,32 @@ export async function GET(
   ctx: RouteContext<"/api/sessions/[id]">,
 ) {
   const { id } = await ctx.params;
-  const store = await getStore();
 
-  const session = await store.getSession(id);
-  if (!session) return jsonError(404, "Session not found.");
+  try {
+    const store = await getStore();
 
-  const rows = await store.listMessages(id);
+    const session = await store.getSession(id);
+    if (!session) return jsonError(404, "Session not found.");
 
-  const transcript = rows
-    .map((m) => {
-      if (m.role === "user" || m.role === "assistant") {
-        return { role: m.role, content: m.content ?? "" };
-      }
-      return null;
-    })
-    .filter((m): m is { role: string; content: string } => m !== null);
+    const rows = await store.listMessages(id);
 
-  return Response.json({
-    ok: true,
-    session,
-    messages: transcript,
-  });
+    const transcript = rows
+      .map((m) => {
+        if (m.role === "user" || m.role === "assistant") {
+          return { role: m.role, content: m.content ?? "" };
+        }
+        return null;
+      })
+      .filter((m): m is { role: string; content: string } => m !== null);
+
+    return Response.json({
+      ok: true,
+      session,
+      messages: transcript,
+    });
+  } catch (err) {
+    return storeErrorResponse(err);
+  }
 }
 
 export async function DELETE(
@@ -37,6 +42,10 @@ export async function DELETE(
   ctx: RouteContext<"/api/sessions/[id]">,
 ) {
   const { id } = await ctx.params;
-  await (await getStore()).deleteSession(id);
-  return Response.json({ ok: true });
+  try {
+    await (await getStore()).deleteSession(id);
+    return Response.json({ ok: true });
+  } catch (err) {
+    return storeErrorResponse(err);
+  }
 }

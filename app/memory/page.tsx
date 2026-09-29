@@ -31,8 +31,14 @@ export default function MemoryPage() {
 
   const load = useCallback(() => {
     fetch("/api/memory")
-      .then((res) => res.json())
-      .then((data) => setMemories(data.memories ?? []))
+      .then(async (res) => {
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          setStatus(data?.error ?? "Failed to load memories.");
+          return;
+        }
+        setMemories(data?.memories ?? []);
+      })
       .catch(() => setStatus("Failed to load memories."))
       .finally(() => setLoading(false));
   }, []);

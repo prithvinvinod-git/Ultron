@@ -322,7 +322,11 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
         streaming: true,
       };
       activeIdRef.current = assistantMsg.id;
-      if (!sessionIdRef.current) setSessionId(sid);
+      if (!sessionIdRef.current) {
+        setSessionId(sid);
+        // Let the sidebar surface the new conversation without polling for it.
+        window.dispatchEvent(new Event("ultron:sessions"));
+      }
       setHydrating(false);
       setTranscript((prev) => [...prev, userMsg, assistantMsg]);
       streamingRef.current = true;

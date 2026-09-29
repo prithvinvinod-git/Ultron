@@ -58,15 +58,21 @@ export function Sidebar({
     loadSessions();
   }, []);
 
-  // Keep the Recent sessions list fresh without a manual refresh: re-fetch on
-  // window focus and on a short interval so a newly created conversation shows up.
+  // Refresh on focus, on tab re-show, and when a session is created/deleted
+  // instead of polling on a timer. Each list call costs real Firestore reads,
+  // and the old 4s interval is what exhausted the free-tier quota.
   useEffect(() => {
-    const onFocus = () => loadSessions();
-    window.addEventListener("focus", onFocus);
-    const id = window.setInterval(loadSessions, 4000);
+    const refresh = () => loadSessions();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") loadSessions();
+    };
+    window.addEventListener("focus", refresh);
+    window.addEventListener("ultron:sessions", refresh);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
-      window.removeEventListener("focus", onFocus);
-      window.clearInterval(id);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("ultron:sessions", refresh);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
 

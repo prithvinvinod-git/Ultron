@@ -181,19 +181,14 @@ export function createStore(): DataStore {
         .orderBy("updatedAt", "desc")
         .limit(limit)
         .get();
-      const summaries = await Promise.all(
-        snap.docs.map(async (doc) => {
-          const row = toSessionRow(doc.id, doc.data());
-          const countSnap = await db()
-            .collection("sessions")
-            .doc(doc.id)
-            .collection("messages")
-            .count()
-            .get();
-          return { ...row, messageCount: countSnap.data().count };
-        }),
-      );
-      return summaries;
+      // Deliberately no per-session `count()` aggregation: nothing in the UI
+      // reads `messageCount`, and one aggregation per session is a billed
+      // Firestore read. The old N+1 here is what drained the free-tier quota
+      // when the sidebar polled this endpoint every 4 seconds.
+      return snap.docs.map((doc) => ({
+        ...toSessionRow(doc.id, doc.data()),
+        messageCount: 0,
+      }));
     },
 
     async deleteSession(id: string): Promise<void> {

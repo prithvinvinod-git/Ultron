@@ -115,12 +115,9 @@ export function MessageBubble({
             {(message.provider || message.streaming) && (
               <div className="mt-0.5 flex items-center gap-2 text-[11px] text-mist">
                 {message.streaming ? (
-                  <span className="flex items-center gap-1.5">
-                    <ThinkingOrb state="working" size={20} theme="dark" />
-                    <span>
-                      {message.provider?.toUpperCase() ?? ""}
-                      {message.model ? ` · ${message.model}` : ""}
-                    </span>
+                  <span>
+                    {message.provider?.toUpperCase() ?? ""}
+                    {message.model ? ` · ${message.model}` : ""}
                   </span>
                 ) : (
                   <>

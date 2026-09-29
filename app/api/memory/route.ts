@@ -1,5 +1,5 @@
 import { deleteMemory, listMemories, saveMemory } from "@/ai/memory/store";
-import { jsonError } from "@/lib/http";
+import { jsonError, storeErrorResponse } from "@/lib/http";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,14 +7,18 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const limit = Math.min(Number(searchParams.get("limit")) || 100, 500);
-  const rows = await listMemories(limit);
-  return Response.json({
-    ok: true,
-    memories: rows.map((m) => ({
-      ...m,
-      tags: safeParseTags(m.tags),
-    })),
-  });
+  try {
+    const rows = await listMemories(limit);
+    return Response.json({
+      ok: true,
+      memories: rows.map((m) => ({
+        ...m,
+        tags: safeParseTags(m.tags),
+      })),
+    });
+  } catch (err) {
+    return storeErrorResponse(err);
+  }
 }
 
 function safeParseTags(raw: string): string[] {
@@ -45,30 +49,38 @@ export async function POST(request: Request) {
   const summary = (body.summary ?? "").trim();
   if (!summary) return jsonError(400, "summary is required.");
 
-  const stored = await saveMemory({
-    summary,
-    detail: body.detail?.trim() ?? "",
-    kind: body.kind ?? "fact",
-    tags: Array.isArray(body.tags) ? body.tags.map(String) : [],
-    importance:
-      typeof body.importance === "number"
-        ? Math.max(1, Math.min(5, body.importance))
-        : 1,
-    scope: body.scope ?? "global",
-    sessionId: body.sessionId,
-  });
+  try {
+    const stored = await saveMemory({
+      summary,
+      detail: body.detail?.trim() ?? "",
+      kind: body.kind ?? "fact",
+      tags: Array.isArray(body.tags) ? body.tags.map(String) : [],
+      importance:
+        typeof body.importance === "number"
+          ? Math.max(1, Math.min(5, body.importance))
+          : 1,
+      scope: body.scope ?? "global",
+      sessionId: body.sessionId,
+    });
 
-  return Response.json(
-    { ok: true, memory: { ...stored, tags: safeParseTags(stored.tags) } },
-    { status: 201 },
-  );
+    return Response.json(
+      { ok: true, memory: { ...stored, tags: safeParseTags(stored.tags) } },
+      { status: 201 },
+    );
+  } catch (err) {
+    return storeErrorResponse(err);
+  }
 }
 
 export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
   if (!id) return jsonError(400, "id query param required.");
-  const deleted = await deleteMemory(id);
-  if (!deleted) return jsonError(404, "Memory not found.");
-  return Response.json({ ok: true });
+  try {
+    const deleted = await deleteMemory(id);
+    if (!deleted) return jsonError(404, "Memory not found.");
+    return Response.json({ ok: true });
+  } catch (err) {
+    return storeErrorResponse(err);
+  }
 }
