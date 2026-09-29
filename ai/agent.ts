@@ -15,6 +15,8 @@ export interface AgentOptions {
   sessionId?: string;
   signal?: AbortSignal;
   maxRounds?: number;
+  /** Hard cap on tool calls per turn, so research can't loop forever. */
+  maxToolCalls?: number;
 }
 
 /**
@@ -119,7 +121,12 @@ async function* runTurn(
   conversation: ChatMessage[],
   options: AgentOptions,
 ): AsyncGenerator<ChatEvent> {
-  const maxRounds = options.maxRounds ?? 6;
+  const maxRounds = options.maxRounds ?? 8;
+  // A tool budget bounds both runaway research and the latency you can feel in
+  // live mode. Raise maxToolCalls for deeper research sessions.
+  const maxToolCalls = options.maxToolCalls ?? 4;
+  let toolCallsUsed = 0;
+  const toolResults = new Map<string, string>();
   let content: string | null = null;
 
   yield {
@@ -178,6 +185,29 @@ async function* runTurn(
     conversation.push({ role: "assistant", content, toolCalls });
     for (const toolCall of toolCalls) {
       const toolCallId = toolCall.id || randomUUID();
+      // Guard against a model that keeps re-researching the same thing until it
+      // runs out of rounds: identical calls replay from cache, and once the
+      // per-turn budget is spent we tell it to answer with what it has.
+      const signature = `${toolCall.name}:${(toolCall.arguments ?? "").trim()}`;
+      const cached = toolResults.get(signature);
+      if (cached !== undefined) {
+        conversation.push({
+          role: "tool",
+          toolCallId,
+          content: `You already ran this exact call this turn. Same result:\n${cached.slice(0, 1500)}`,
+        });
+        continue;
+      }
+      if (toolCallsUsed >= maxToolCalls) {
+        conversation.push({
+          role: "tool",
+          toolCallId,
+          content: `Tool budget for this turn is spent (${maxToolCalls} calls). Answer the user now using the results you already have. Do not call more tools.`,
+        });
+        continue;
+      }
+      toolCallsUsed += 1;
+
       const activity = activityForTool(toolCall.name);
       yield { type: "activity", activity, label: activityLabel(activity) };
       yield { type: "tool_start", toolCallId, name: toolCall.name };
@@ -185,6 +215,7 @@ async function* runTurn(
       let resultText: string;
       try {
         resultText = await executeTool(toolCall.name, toolCall.arguments);
+        toolResults.set(signature, resultText);
         yield {
           type: "tool_end",
           toolCallId,
@@ -206,13 +237,51 @@ async function* runTurn(
     }
   }
 
-  yield {
-    type: "done",
-    content,
-    provider: provider.config.name,
-    model: options.model ?? provider.config.defaultModel,
-    rounds: maxRounds,
-  };
+  // The round budget is spent (usually heavy research). Make one tools-free
+  // call so the user always gets a real answer instead of an empty bubble.
+  yield { type: "activity", activity: "generating", label: activityLabel("generating") };
+  try {
+    const wrapUp = provider.stream(
+      [
+        ...conversation,
+        {
+          role: "user",
+          content:
+            "Answer the original question now, using the information you already gathered. Do not call any tools.",
+        },
+      ],
+      { model: options.model, signal: options.signal },
+    );
+    let streamed = "";
+    let step = await wrapUp.next();
+    while (!step.done) {
+      if (step.value.type === "text") {
+        streamed += step.value.text;
+        yield { type: "text", text: step.value.text };
+      }
+      step = await wrapUp.next();
+    }
+    const finalContent = step.value.content ?? streamed ?? content;
+    yield {
+      type: "done",
+      content: finalContent?.trim()
+        ? finalContent
+        : "I gathered some results but couldn't turn them into an answer. Try rephrasing your question.",
+      provider: provider.config.name,
+      model: options.model ?? provider.config.defaultModel,
+      rounds: maxRounds,
+    };
+  } catch {
+    yield {
+      type: "done",
+      content: content?.trim()
+        ? content
+        : "I couldn't finish that one — please try again.",
+      provider: provider.config.name,
+      model: options.model ?? provider.config.defaultModel,
+      rounds: maxRounds,
+    };
+  }
 }
 
 function buildSystemPrompt(opts: { system?: string; memories: Memory[] }): string {
@@ -222,8 +291,8 @@ function buildSystemPrompt(opts: { system?: string; memories: Memory[] }): strin
 
 WEB ACCESS — IMPORTANT:
 - Whenever the user mentions searching, looking something up, or asks about anything current (news, releases, prices, scores, weather, "what's new", "latest", "right now"), you MUST call search_web before answering. Never answer those from memory.
+- Be economical: one search is usually enough, and open_url only when a snippet is genuinely insufficient. Once you can answer, answer — do not keep researching.
 - When the user is in a voice/live conversation, keep spoken answers short and conversational — one or two sentences unless asked to elaborate.
-- Use open_url to read a promising result when the snippet is not enough.
 
 TOOLS: get_time, calculate, recall_memories, store_memory, search_web, open_url, system_info.
 
