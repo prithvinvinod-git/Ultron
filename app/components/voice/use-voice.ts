@@ -194,13 +194,18 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
           // don't re-arm the microphone while the assistant is still talking.
           await new Promise<void>((resolve) => {
             speakingResolveRef.current = resolve;
-            audio.onended = () => resolveSpeaking();
-            audio.onerror = () => {
+            const finish = () => {
+              // Free the blob as soon as playback is done with it.
+              URL.revokeObjectURL(url);
               resolveSpeaking();
+            };
+            audio.onended = finish;
+            audio.onerror = () => {
+              finish();
               if (!speakCancelledRef.current) void speakBrowser(clean);
             };
             void audio.play().catch(() => {
-              resolveSpeaking();
+              finish();
               if (!speakCancelledRef.current) void speakBrowser(clean);
             });
           });

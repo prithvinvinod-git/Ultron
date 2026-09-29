@@ -39,65 +39,37 @@ export function activityLabel(activity: ActivityKind): string {
 }
 
 /**
- * Spoken acknowledgements, JARVIS-style: one short clause, never more, so the
- * user hears progress instead of dead air while a turn is being worked out.
+ * Spoken status is deliberately a SINGLE word, and it is said once per command.
+ * Longer chatter ("Let me think about that…") stacked up across tool rounds and
+ * the assistant sounded like it was stalling rather than answering.
  */
-const PHRASES: Record<ActivityKind, string[]> = {
-  thinking: [
-    "Thinking it through.",
-    "Let me think about that.",
-    "Working on it.",
-    "One moment.",
-    "Processing that now.",
-  ],
-  searching: [
-    "Searching the web.",
-    "Looking that up.",
-    "Checking the latest sources.",
-    "Scanning for current information.",
-  ],
-  reading: [
-    "Reading that page.",
-    "Pulling up the details.",
-    "Reviewing the source.",
-  ],
-  generating: [
-    "Putting that together.",
-    "Composing my reply.",
-    "Almost there.",
-  ],
-  calculating: ["Running the numbers.", "Crunching that."],
-  remembering: [
-    "Checking my memory.",
-    "Recalling what I know.",
-    "Looking through my notes.",
-  ],
-  working: ["On it.", "Give me a second.", "Working on it."],
+const SPOKEN_WORD: Record<ActivityKind, string> = {
+  thinking: "Thinking",
+  searching: "Searching",
+  reading: "Reading",
+  generating: "Generating",
+  calculating: "Calculating",
+  remembering: "Remembering",
+  working: "Working",
 };
 
-/** Rotating filler spoken while a turn is being worked out, so it isn't silent. */
-const THINKING_FILLERS = [
-  "Thinking…",
-  "Working through it…",
-  "One moment…",
-  "Almost there…",
-  "Processing…",
-  "Just a second…",
-  "Hold on…",
-  "Getting to it…",
+export function activitySpokenWord(activity: ActivityKind): string {
+  return SPOKEN_WORD[activity] ?? SPOKEN_WORD.working;
+}
+
+/**
+ * One long-wait line, used at most once per command, only when a turn is slow
+ * enough that silence would be confusing. Not a loop: the point is to cover a
+ * gap, not to fill it.
+ */
+const LONG_WAIT_LINES = [
+  "Still working on it.",
+  "Bear with me a moment.",
+  "Almost there.",
 ];
 
-/** Deterministic-ish rotation without Math.random, so it stays testable. */
-function pick<T>(list: T[], index: number): T {
-  return list[((index % list.length) + list.length) % list.length];
-}
-
-export function activityPhrase(activity: ActivityKind, index: number): string {
-  return pick(PHRASES[activity] ?? PHRASES.working, index);
-}
-
-export function thinkingFiller(index: number): string {
-  return pick(THINKING_FILLERS, index);
+export function longWaitLine(index: number): string {
+  return LONG_WAIT_LINES[index % LONG_WAIT_LINES.length];
 }
 
 /**

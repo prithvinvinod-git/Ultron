@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  activityPhrase,
+  activitySpokenWord,
   isStopPhrase,
+  longWaitLine,
   looksLikeEcho,
-  thinkingFiller,
 } from "@/lib/activity";
 import type { ActivityKind } from "@/ai/types";
 
@@ -81,16 +81,28 @@ export function useLiveSession({
   const turnBufferRef = useRef("");
   const dispatchTimerRef = useRef<number | null>(null);
   const restartTimerRef = useRef<number | null>(null);
-  const fillerTimerRef = useRef<number | null>(null);
+  const longWaitTimerRef = useRef<number | null>(null);
   const speakStartedAtRef = useRef(0);
   const spokenTextRef = useRef("");
   const recognitionRef = useRef<NativeRecognition | null>(null);
-  const phraseIndexRef = useRef(0);
-  const fillerIndexRef = useRef(0);
+  const longWaitIndexRef = useRef(0);
+  /** One spoken status word per command — the "no looping" guarantee. */
+  const statusSpokenRef = useRef(false);
+  /** At most one long-wait line per command, so silence is covered, not filled. */
+  const longWaitSpokenRef = useRef(false);
 
-  // Serialised TTS so fillers never overlap each other or the reply.
-  const speechChainRef = useRef<Promise<void>>(Promise.resolve());
-  const speechGenRef = useRef(0);
+  /*
+   * Speech queue. An explicit queue (rather than a chain of promises) is what
+   * makes the reply reliably audible: anything queued can be dropped in one
+   * move, playback is strictly serialised, and a status line can never talk
+   * over the answer.
+   */
+  const pendingRef = useRef<{ text: string; seq: number }[]>([]);
+  const seqRef = useRef(0);
+  const dropBeforeRef = useRef(0);
+  const pumpingRef = useRef(false);
+  const currentSpeechRef = useRef<Promise<void> | null>(null);
+  const drainResolversRef = useRef<(() => void)[]>([]);
 
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -120,54 +132,108 @@ export function useLiveSession({
     setStatus(next);
   }, []);
 
-  /** Queues a short spoken line, ignoring anything queued before this call. */
-  const sayStatus = useCallback((text: string) => {
-    const gen = ++speechGenRef.current;
-    speechChainRef.current = speechChainRef.current
-      .then(async () => {
-        // A newer status (or the real reply) superseded this one — drop it.
-        if (gen !== speechGenRef.current && statusRef.current !== "thinking") return;
-        await speakRef.current(text);
-      })
-      .catch(() => {});
+  /** Drops everything queued but not yet spoken. */
+  const cancelQueuedSpeech = useCallback(() => {
+    dropBeforeRef.current = seqRef.current + 1;
+    pendingRef.current = [];
   }, []);
 
-  const stopFillers = useCallback(() => {
-    if (fillerTimerRef.current !== null) {
-      window.clearInterval(fillerTimerRef.current);
-      fillerTimerRef.current = null;
+  /** Serialised player: one line at a time, newest-first wins on cancel. */
+  const pump = useCallback(async () => {
+    if (pumpingRef.current) return;
+    pumpingRef.current = true;
+    try {
+      while (pendingRef.current.length > 0 && activeRef.current) {
+        const item = pendingRef.current.shift();
+        if (!item) break;
+        // Superseded while waiting its turn.
+        if (item.seq < dropBeforeRef.current) continue;
+        const played = speakRef.current(item.text).catch(() => {});
+        currentSpeechRef.current = played;
+        try {
+          await played;
+        } finally {
+          if (currentSpeechRef.current === played) currentSpeechRef.current = null;
+        }
+      }
+    } finally {
+      pumpingRef.current = false;
+      const resolvers = drainResolversRef.current;
+      drainResolversRef.current = [];
+      for (const resolve of resolvers) resolve();
     }
   }, []);
 
-  const startFillers = useCallback(() => {
-    stopFillers();
-    fillerTimerRef.current = window.setInterval(() => {
-      if (!activeRef.current || statusRef.current !== "thinking") return;
-      sayStatus(thinkingFiller(fillerIndexRef.current++));
-    }, 4500);
-  }, [sayStatus, stopFillers]);
+  const enqueueSpeech = useCallback(
+    (text: string) => {
+      if (!activeRef.current) return;
+      pendingRef.current.push({ text, seq: ++seqRef.current });
+      void pump();
+    },
+    [pump],
+  );
 
   /**
-   * Publishes what Ultron is doing. The status line always updates, but we only
-   * *speak* when the kind of work changes so a long turn doesn't chatter.
+   * Speaks the assistant's answer. It supersedes any queued status line, waits
+   * for whatever short line is currently playing to finish, and resolves when
+   * the answer has actually been spoken.
+   */
+  const speakReply = useCallback(
+    async (text: string) => {
+      cancelQueuedSpeech();
+      // Let a status word finish rather than chopping it off mid-word.
+      if (currentSpeechRef.current) await currentSpeechRef.current.catch(() => {});
+      const done = new Promise<void>((resolve) => {
+        drainResolversRef.current.push(resolve);
+      });
+      pendingRef.current.push({ text, seq: ++seqRef.current });
+      void pump();
+      await done;
+    },
+    [cancelQueuedSpeech, pump],
+  );
+
+  const stopLongWait = useCallback(() => {
+    if (longWaitTimerRef.current !== null) {
+      window.clearTimeout(longWaitTimerRef.current);
+      longWaitTimerRef.current = null;
+    }
+  }, []);
+
+  /**
+   * One line, at most, and only if the turn drags on. The old code looped
+   * filler every 4.5s, which is what made Ultron sound stuck; now a slow turn
+   * says one short line and then goes quiet until the answer.
+   */
+  const armLongWait = useCallback(() => {
+    stopLongWait();
+    longWaitTimerRef.current = window.setTimeout(() => {
+      longWaitTimerRef.current = null;
+      if (!activeRef.current || statusRef.current !== "thinking") return;
+      if (longWaitSpokenRef.current) return;
+      longWaitSpokenRef.current = true;
+      enqueueSpeech(longWaitLine(longWaitIndexRef.current++));
+    }, 8000);
+  }, [stopLongWait, enqueueSpeech]);
+
+  /**
+   * Publishes what Ultron is doing. The status line always updates, but it is
+   * spoken only once per command, as a single word, and never over the answer.
    */
   const announce = useCallback(
     (next: ActivityKind, options?: { silent?: boolean }) => {
       if (!activeRef.current) return;
-      const previous = activityRef.current;
       activityRef.current = next;
       setActivity(next);
-      if (next !== "thinking") stopFillers();
       if (options?.silent) return;
-      // Only speak when the kind of work actually changes, so a long turn
-      // doesn't chatter the same line over and over.
-      if (previous === next) return;
-      sayStatus(activityPhrase(next, phraseIndexRef.current++));
+      // Never talk over the read-out, and never repeat mid-turn.
+      if (statusRef.current === "speaking") return;
+      if (statusSpokenRef.current) return;
+      statusSpokenRef.current = true;
+      enqueueSpeech(activitySpokenWord(next));
     },
-    [sayStatus, stopFillers],
+    [enqueueSpeech],
   );
-
-  const clearFillers = useCallback(() => stopFillers(), [stopFillers]);
 
   const handleTurn = useCallback(
     async (text: string): Promise<void> => {
@@ -175,22 +241,24 @@ export function useLiveSession({
       if (!clean) return;
       setSubtitle("");
       setStatusSafe("thinking");
-      announce("thinking", { silent: true });
-      startFillers();
+      statusSpokenRef.current = false;
+      longWaitSpokenRef.current = false;
+      // Clear anything left over from the previous command first.
+      cancelQueuedSpeech();
+      announce("thinking");
+      armLongWait();
       try {
         const reply = await onTurnRef.current(clean);
-        clearFillers();
+        stopLongWait();
         if (!activeRef.current) return;
         if (reply && reply.trim()) {
-          // Invalidate any queued filler so the reply is the only thing spoken.
-          speechGenRef.current += 1;
           setStatusSafe("speaking");
           speakStartedAtRef.current = Date.now();
           spokenTextRef.current = reply;
           activityRef.current = null;
           setActivity(null);
           try {
-            await speakRef.current(reply);
+            await speakReply(reply);
           } finally {
             spokenTextRef.current = "";
           }
@@ -198,12 +266,19 @@ export function useLiveSession({
         if (!activeRef.current) return;
         setStatusSafe("listening");
       } catch {
-        clearFillers();
+        stopLongWait();
         onErrorRef.current?.("Live conversation failed. Switched back to listening.");
         if (activeRef.current) setStatusSafe("listening");
       }
     },
-    [setStatusSafe, announce, startFillers, clearFillers],
+    [
+      setStatusSafe,
+      announce,
+      armLongWait,
+      stopLongWait,
+      cancelQueuedSpeech,
+      speakReply,
+    ],
   );
 
   /**
@@ -217,7 +292,8 @@ export function useLiveSession({
       if (!text) return;
 
       if (isStopPhrase(text)) {
-        clearFillers();
+        stopLongWait();
+        cancelQueuedSpeech();
         stopSpeakingRef.current();
         onInterruptRef.current?.();
         turnBufferRef.current = "";
@@ -238,13 +314,14 @@ export function useLiveSession({
       }
 
       // A real new command: abandon whatever is in flight and take this one.
-      clearFillers();
+      stopLongWait();
+      cancelQueuedSpeech();
       stopSpeakingRef.current();
       onInterruptRef.current?.();
       turnBufferRef.current = "";
       void handleTurn(text);
     },
-    [clearFillers, handleTurn, setStatusSafe],
+    [stopLongWait, cancelQueuedSpeech, handleTurn, setStatusSafe],
   );
 
   const dispatchBuffer = useCallback(async () => {
@@ -476,7 +553,9 @@ export function useLiveSession({
   const stop = useCallback(() => {
     stoppingRef.current = true;
     activeRef.current = false;
-    clearFillers();
+    stopLongWait();
+    cancelQueuedSpeech();
+    drainResolversRef.current = [];
     if (dispatchTimerRef.current !== null) {
       window.clearTimeout(dispatchTimerRef.current);
       dispatchTimerRef.current = null;
@@ -500,13 +579,14 @@ export function useLiveSession({
     setActivity(null);
     setSubtitle("");
     setStatusSafe("idle");
-  }, [endFallbackResources, setStatusSafe, clearFillers]);
+  }, [endFallbackResources, setStatusSafe, stopLongWait, cancelQueuedSpeech]);
 
   useEffect(() => {
     return () => {
       stoppingRef.current = true;
       activeRef.current = false;
-      clearFillers();
+      stopLongWait();
+      cancelQueuedSpeech();
       if (dispatchTimerRef.current !== null) {
         window.clearTimeout(dispatchTimerRef.current);
       }
@@ -514,7 +594,7 @@ export function useLiveSession({
         window.clearTimeout(restartTimerRef.current);
       }
     };
-  }, [clearFillers]);
+  }, [stopLongWait, cancelQueuedSpeech]);
 
   return {
     status,

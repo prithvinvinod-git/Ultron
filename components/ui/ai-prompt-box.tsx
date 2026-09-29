@@ -287,7 +287,7 @@ const PromptInput = React.forwardRef<HTMLDivElement, PromptInputProps>(
           <div
             ref={ref}
             className={cn(
-              "rounded-3xl border border-[#444444] bg-[#1F2023] p-2 shadow-[0_8px_30px_rgba(0,0,0,0.24)] transition-all duration-300",
+              "relative rounded-3xl border border-[#444444] bg-[#1F2023] p-2 shadow-[0_8px_30px_rgba(0,0,0,0.24)] transition-all duration-300",
               isLoading && "border-red-500/70",
               className,
             )}
@@ -307,43 +307,85 @@ PromptInput.displayName = "PromptInput";
 interface PromptInputTextareaProps {
   disableAutosize?: boolean;
   placeholder?: string;
+  /** Arrow/Enter/Escape keys are consumed by the slash-command menu. */
+  onSlashKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean;
 }
-const PromptInputTextarea: React.FC<
-  PromptInputTextareaProps & React.ComponentProps<typeof Textarea>
-> = ({ className, onKeyDown, disableAutosize = false, placeholder, ...props }) => {
-  const { value, setValue, maxHeight, onSubmit, disabled } = usePromptInput();
-  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
-  React.useEffect(() => {
-    if (disableAutosize || !textareaRef.current) return;
-    textareaRef.current.style.height = "auto";
-    textareaRef.current.style.height =
-      typeof maxHeight === "number"
-        ? `${Math.min(textareaRef.current.scrollHeight, maxHeight)}px`
-        : `min(${textareaRef.current.scrollHeight}px, ${maxHeight})`;
-  }, [value, maxHeight, disableAutosize]);
+/** A tool offered as a slash command (from GET /api/tools). */
+interface SlashTool {
+  name: string;
+  description: string;
+}
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      onSubmit?.();
-    }
-    onKeyDown?.(e);
-  };
+const PromptInputTextarea = React.forwardRef<
+  HTMLTextAreaElement,
+  PromptInputTextareaProps & Omit<React.ComponentProps<typeof Textarea>, "ref">
+>(
+  (
+    {
+      className,
+      onKeyDown,
+      disableAutosize = false,
+      placeholder,
+      onSlashKeyDown,
+      ...props
+    },
+    ref,
+  ) => {
+    const { value, setValue, maxHeight, onSubmit, disabled } = usePromptInput();
+    const textareaRef = React.useRef<HTMLTextAreaElement>(null);
 
-  return (
-    <Textarea
-      ref={textareaRef}
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      onKeyDown={handleKeyDown}
-      className={cn("text-base", className)}
-      disabled={disabled}
-      placeholder={placeholder}
-      {...props}
-    />
-  );
-};
+    const setRefs = React.useCallback(
+      (node: HTMLTextAreaElement | null) => {
+        textareaRef.current = node;
+        if (typeof ref === "function") ref(node);
+        else if (ref) ref.current = node;
+      },
+      [ref],
+    );
+
+    React.useEffect(() => {
+      if (disableAutosize || !textareaRef.current) return;
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height =
+        typeof maxHeight === "number"
+          ? `${Math.min(textareaRef.current.scrollHeight, maxHeight)}px`
+          : `min(${textareaRef.current.scrollHeight}px, ${maxHeight})`;
+    }, [value, maxHeight, disableAutosize]);
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // The slash-command menu gets first refusal on the keys it uses.
+      if (onSlashKeyDown?.(e)) return;
+      // Don't submit mid-composition (IME) or while a modifier is held.
+      if (
+        e.key === "Enter" &&
+        !e.shiftKey &&
+        !e.nativeEvent.isComposing &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey
+      ) {
+        e.preventDefault();
+        onSubmit?.();
+      }
+      onKeyDown?.(e);
+    };
+
+    return (
+      <Textarea
+        ref={setRefs}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={handleKeyDown}
+        className={cn("text-base", className)}
+        disabled={disabled}
+        placeholder={placeholder}
+        {...props}
+      />
+    );
+  },
+);
+PromptInputTextarea.displayName = "PromptInputTextarea";
 
 const PromptInputActions: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
   children,
@@ -541,6 +583,7 @@ export const PromptInputBox = React.forwardRef<
   }, [handlePaste]);
 
   const handleSubmit = () => {
+    if (isLoading || listening || externalDisabled) return;
     if (value.trim() || files.length > 0) {
       const messagePrefix = showThink ? "[Think: " : "";
       const formattedInput = messagePrefix ? `${messagePrefix}${value}]` : value;
@@ -550,6 +593,124 @@ export const PromptInputBox = React.forwardRef<
       setFilePreviews({});
     }
   };
+
+  /* ------------------------------------------------------------------ *
+   * Slash commands: typing "/" offers the agent's tools.
+   * ------------------------------------------------------------------ */
+  const [tools, setTools] = React.useState<SlashTool[]>([]);
+  const [slashOpen, setSlashOpen] = React.useState(false);
+  const [slashSel, setSlashSel] = React.useState({ query: "", index: 0 });
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
+  const toolsLoadedRef = React.useRef(false);
+  // `setValue` may be recreated every render; a ref keeps the callbacks stable.
+  const setValueRef = React.useRef(setValue);
+  React.useEffect(() => {
+    setValueRef.current = setValue;
+  });
+
+  // Load the catalogue once, the first time the menu is opened.
+  React.useEffect(() => {
+    if (!slashOpen || toolsLoadedRef.current) return;
+    toolsLoadedRef.current = true;
+    let cancelled = false;
+    fetch("/api/tools")
+      .then((r) => (r.ok ? r.json() : { tools: [] }))
+      .then((data: { tools?: SlashTool[] }) => {
+        if (!cancelled && Array.isArray(data.tools)) setTools(data.tools);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [slashOpen]);
+
+  // Only treat it as a slash command while the "/" is still the first token and
+  // nothing has been typed after it but the query.
+  const slashQuery = React.useMemo(() => {
+    if (!value.startsWith("/")) return null;
+    if (value.includes("\n")) return null;
+    const match = value.slice(1).match(/^([\w-]*)$/);
+    return match ? match[1] : null;
+  }, [value]);
+
+  const matches = React.useMemo(() => {
+    if (slashQuery === null) return [];
+    const q = slashQuery.toLowerCase();
+    if (!q) return tools.slice(0, 8);
+    return tools
+      .filter(
+        (t) =>
+          t.name.toLowerCase().includes(q) ||
+          t.description.toLowerCase().includes(q),
+      )
+      .slice(0, 8);
+  }, [tools, slashQuery]);
+
+  const menuOpen = slashOpen && slashQuery !== null && matches.length > 0;
+
+  // The highlight is remembered per query, so typing filters it back to the top
+  // without an effect that would re-render in a loop.
+  const slashIndex =
+    slashSel.query === (slashQuery ?? "") ? slashSel.index : 0;
+  const setSlashIndex = React.useCallback(
+    (next: number | ((i: number) => number)) => {
+      setSlashSel((prev) => {
+        const current = prev.query === (slashQuery ?? "") ? prev.index : 0;
+        const value =
+          typeof next === "function"
+            ? (next as (i: number) => number)(current)
+            : next;
+        return { query: slashQuery ?? "", index: value };
+      });
+    },
+    [slashQuery],
+  );
+
+  const applySlashTool = React.useCallback(
+    (tool: SlashTool) => {
+      setValueRef.current(`/${tool.name} `);
+      setSlashOpen(false);
+      setSlashSel({ query: "", index: 0 });
+      // Keep the caret in the box so the user can finish the request.
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    },
+    [],
+  );
+
+  const onSlashKeyDown = React.useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
+      if (!menuOpen) {
+        if (e.key === "Escape" && slashOpen) {
+          setSlashOpen(false);
+          return true;
+        }
+        return false;
+      }
+      if (e.key === "ArrowDown" || (e.key === "n" && e.ctrlKey)) {
+        e.preventDefault();
+        setSlashIndex((i) => (i + 1) % matches.length);
+        return true;
+      }
+      if (e.key === "ArrowUp" || (e.key === "p" && e.ctrlKey)) {
+        e.preventDefault();
+        setSlashIndex((i) => (i - 1 + matches.length) % matches.length);
+        return true;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        const pick = matches[slashIndex] ?? matches[0];
+        if (pick) applySlashTool(pick);
+        return true;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSlashOpen(false);
+        return true;
+      }
+      return false;
+    },
+    [menuOpen, slashOpen, matches, slashIndex, setSlashIndex, applySlashTool],
+  );
 
   const hasContent = value.trim() !== "" || files.length > 0;
 
@@ -604,10 +765,44 @@ export const PromptInputBox = React.forwardRef<
 
         {listening && <VoiceRecorder time={recTime} />}
 
+        {menuOpen && (
+          <div className="absolute bottom-full left-0 z-50 mb-2 w-full overflow-hidden rounded-2xl border border-[#3a3b40] bg-[#242529] shadow-[0_-8px_30px_rgba(0,0,0,0.35)]">
+            <div className="border-b border-[#34353a] px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-[#8b8d95]">
+              Tools
+            </div>
+            <ul className="max-h-64 overflow-y-auto py-1">
+              {matches.map((tool, i) => (
+                <li key={tool.name}>
+                  <button
+                    type="button"
+                    onMouseEnter={() => setSlashIndex(i)}
+                    onClick={() => applySlashTool(tool)}
+                    className={cn(
+                      "flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left transition-colors",
+                      i === slashIndex
+                        ? "bg-[#8B5CF6]/15"
+                        : "hover:bg-white/5",
+                    )}
+                  >
+                    <span className="font-mono text-sm text-[#c9cbd1]">
+                      /{tool.name}
+                    </span>
+                    <span className="line-clamp-2 text-xs text-[#8b8d95]">
+                      {tool.description}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="transition-all duration-300">
           <PromptInputTextarea
             placeholder={showThink ? "Think deeply..." : placeholder}
             className="text-base"
+            ref={textareaRef}
+            onSlashKeyDown={onSlashKeyDown}
           />
         </div>
 
