@@ -24,6 +24,14 @@ export async function getStore(): Promise<DataStore> {
     backend === "firestore"
       ? await import("@/db/firestore-store")
       : await import("@/db/libsql-store");
-  cachedStore = storeModule.createStore();
-  return cachedStore;
+  try {
+    const store = storeModule.createStore();
+    cachedStore = store;
+    return store;
+  } catch (err) {
+    // Surface the real reason (bad/missing credentials, etc.) instead of an
+    // opaque 500, so /api/health and the server logs can explain the failure.
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`[${backend}] store init failed: ${reason}`);
+  }
 }

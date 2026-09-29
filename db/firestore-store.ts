@@ -9,7 +9,7 @@ import {
   Timestamp,
   type Firestore,
 } from "firebase-admin/firestore";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import type {
   CreateSessionInput,
   DataStore,
@@ -23,6 +23,13 @@ import type {
   SessionSummary,
 } from "@/db/types";
 
+/**
+ * Resolves the service account from env.
+ *
+ * FIREBASE_SERVICE_ACCOUNT (raw JSON or base64) is the portable form and the
+ * only one that works on serverless hosts like Vercel. GOOGLE_APPLICATION_CREDENTIALS
+ * is a *file path* and only works where that file actually exists (i.e. local dev).
+ */
 function resolveCredentials(): ServiceAccount {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
   if (raw) {
@@ -30,14 +37,28 @@ function resolveCredentials(): ServiceAccount {
     if (!json.startsWith("{")) {
       json = Buffer.from(json, "base64").toString("utf8");
     }
-    return JSON.parse(json) as ServiceAccount;
+    try {
+      return JSON.parse(json) as ServiceAccount;
+    } catch {
+      throw new Error(
+        "FIREBASE_SERVICE_ACCOUNT is not valid JSON. Paste the service-account JSON, or its base64 encoding.",
+      );
+    }
   }
   const path = process.env.GOOGLE_APPLICATION_CREDENTIALS;
   if (path) {
+    if (!existsSync(path)) {
+      throw new Error(
+        `GOOGLE_APPLICATION_CREDENTIALS points to "${path}", which does not exist on this host. ` +
+          "That path only works on the machine that downloaded the key file. " +
+          "On Vercel (or any other host) set FIREBASE_SERVICE_ACCOUNT to the service-account JSON instead " +
+          "(raw JSON, or base64 of it).",
+      );
+    }
     return JSON.parse(readFileSync(path, "utf8")) as ServiceAccount;
   }
   throw new Error(
-    "Firestore store requires FIREBASE_SERVICE_ACCOUNT or GOOGLE_APPLICATION_CREDENTIALS.",
+    "Firestore store requires FIREBASE_SERVICE_ACCOUNT (raw JSON or base64) or GOOGLE_APPLICATION_CREDENTIALS (a local file path).",
   );
 }
 
