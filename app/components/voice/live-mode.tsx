@@ -3,6 +3,8 @@
 import { useEffect, useRef } from "react";
 import type { LiveStatus } from "@/app/components/voice/use-live-session";
 import { VoicePoweredOrb } from "@/components/ui/voice-powered-orb";
+import { activityLabel } from "@/lib/activity";
+import type { ActivityKind } from "@/ai/types";
 import { cn } from "@/lib/utils";
 
 export interface LiveCaption {
@@ -12,10 +14,16 @@ export interface LiveCaption {
 
 export function LiveMode({
   status,
+  activity,
+  subtitle,
   captions,
   onStop,
 }: {
   status: LiveStatus;
+  /** What Ultron is doing right now (searching, generating, …). */
+  activity?: ActivityKind | null;
+  /** Live transcript of what the user is saying. */
+  subtitle?: string;
   captions: LiveCaption[];
   onStop: () => void;
 }) {
@@ -28,6 +36,15 @@ export function LiveMode({
   }, [captions, status]);
 
   const speaking = status === "speaking";
+  // Surface the agent's real activity (e.g. "Searching the web…") while it works.
+  const statusLine =
+    status === "listening"
+      ? "Listening…"
+      : status === "speaking"
+        ? "Speaking…"
+        : activity
+          ? activityLabel(activity)
+          : "Thinking…";
 
   return (
     <div className="flex h-full min-h-0 flex-col items-center gap-4 px-6 pt-2">
@@ -60,12 +77,17 @@ export function LiveMode({
       </div>
 
       {/* Status line */}
-      <div className="flex shrink-0 flex-col items-center gap-1 text-center">
-        <p className="text-sm font-medium text-ink">
-          {status === "listening" && "Listening…"}
-          {status === "thinking" && "Thinking…"}
-          {status === "speaking" && "Speaking…"}
-        </p>
+      <div className="flex min-h-[4.5rem] shrink-0 flex-col items-center gap-1 text-center">
+        <p className="text-sm font-medium text-ink">{statusLine}</p>
+        {subtitle ? (
+          <p className="max-w-md text-balance text-xs italic text-graphite">
+            “{subtitle}”
+          </p>
+        ) : (
+          <p className="text-xs text-mist">
+            Say “stop” to cut in, or just talk over me.
+          </p>
+        )}
         <button
           onClick={onStop}
           className="mt-1 rounded-full border border-bad/40 bg-bad/10 px-4 py-1.5 text-xs text-bad transition hover:bg-bad/20"

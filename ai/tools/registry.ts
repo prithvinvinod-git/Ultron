@@ -2,6 +2,7 @@ import "server-only";
 import { getStore } from "@/db/store";
 import { getProviderStatus } from "@/ai/providers";
 import { memoryCount, recallMemories, saveMemory } from "@/ai/memory/store";
+import { formatResults, readPage, searchWeb } from "@/ai/tools/web-search";
 import type { ToolSpec } from "@/ai/types";
 import os from "node:os";
 import process from "node:process";
@@ -114,14 +115,36 @@ const TOOLS: ToolDefinition[] = [
     function: {
       name: "search_web",
       description:
-        "Search the web for up-to-date information. Uses the keyless Wikipedia API as a lean default; swap the transport for a full search provider when one is configured.",
+        "Search the real web for current information (news, prices, docs, anything that changes). ALWAYS call this instead of guessing whenever the user asks about current events, recent releases, scores, weather, prices, or says things like 'search the web', 'look it up', 'check online', or 'what's happening with X'. Then use open_url to read the most promising result.",
       parameters: {
         type: "object",
         required: ["query"],
-        properties: { query: { type: "string", description: "Search query." } },
+        properties: {
+          query: { type: "string", description: "Search query." },
+        },
       },
     },
-    execute: (args) => searchWikipedia(String(args.query ?? "")),
+    execute: async (args) => {
+      const query = String(args.query ?? "");
+      const results = await searchWeb(query);
+      return formatResults(query, results);
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "open_url",
+      description:
+        "Fetch a web page and return its readable text. Use it after search_web to read the full content of a specific result before answering.",
+      parameters: {
+        type: "object",
+        required: ["url"],
+        properties: {
+          url: { type: "string", description: "Absolute URL to read." },
+        },
+      },
+    },
+    execute: async (args) => readPage(String(args.url ?? "")),
   },
   {
     type: "function",
@@ -227,27 +250,4 @@ function safeEvaluate(expression: string): number {
     throw new Error(`Uncomputable expression "${expression}".`);
   }
   return result as number;
-}
-
-async function searchWikipedia(query: string): Promise<string> {
-  const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
-    query,
-  )}&format=json&srlimit=4&origin=*`;
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return `Web search failed (HTTP ${res.status}).`;
-    const data = (await res.json()) as {
-      query?: { search?: { title: string; snippet: string }[] };
-    };
-    const hits = data?.query?.search ?? [];
-    if (!hits.length) return "No results found.";
-    return hits
-      .map(
-        (hit) =>
-          `- ${hit.title}\n  ${String(hit.snippet).replace(/<[^>]*>/g, "")}`,
-      )
-      .join("\n");
-  } catch (err) {
-    return `Web search error: ${err instanceof Error ? err.message : String(err)}`;
-  }
 }

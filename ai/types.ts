@@ -43,11 +43,26 @@ export interface ChatEventToolStep {
   error?: string;
 }
 
+/**
+ * Coarse "what is Ultron doing right now" signal. The UI shows it and live
+ * voice mode speaks a short acknowledgement for it, so the user is never
+ * left in silence while a slow turn is being worked out.
+ */
+export type ActivityKind =
+  | "thinking"
+  | "searching"
+  | "reading"
+  | "generating"
+  | "calculating"
+  | "remembering"
+  | "working";
+
 /** Events streamed over SSE from /api/chat while the agent runs. */
 export type ChatEvent =
   | { type: "meta"; provider: string; model: string }
   | { type: "text"; text: string }
   | { type: "reasoning"; text: string }
+  | { type: "activity"; activity: ActivityKind; label: string }
   | { type: "tool_start"; toolCallId: string; name: string }
   | { type: "tool_end"; toolCallId: string; name: string; result: string }
   | { type: "tool_error"; toolCallId: string; name: string; error: string }

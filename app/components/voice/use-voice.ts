@@ -3,7 +3,14 @@
 import { useCallback, useRef, useState } from "react";
 
 export interface UseVoiceOptions {
+  /** Live draft text, streamed while the user speaks. */
   onTranscript: (text: string) => void;
+  /**
+   * Final captured text, delivered when the user *closes* the recording.
+   * Push-to-talk is deliberately a two-step flow: transcription streams into
+   * the composer while the mic is open, and only this callback sends it.
+   */
+  onFinalize?: (text: string) => void;
   onError?: (message: string) => void;
 }
 
@@ -46,7 +53,7 @@ function getNativeRecognition(): (new () => NativeRecognition) | undefined {
  * /api/voice/asr endpoint. Speaking uses /api/voice/tts first, then the
  * browser synthesizer.
  */
-export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
+export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions) {
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [voiceKey, setVoiceKeyState] = useState<string>(() => {
@@ -64,6 +71,11 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
   const speakingResolveRef = useRef<(() => void) | null>(null);
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const speakCancelledRef = useRef(false);
+  /** True while a capture session is open (mic open, awaiting the user to close). */
+  const sessionRef = useRef(false);
+  /** Keeps the Web Speech recognizer re-armed across its internal pauses. */
+  const wantListeningRef = useRef(false);
+  const wsRestartRef = useRef<number | null>(null);
 
   const setVoiceKey = useCallback((key: string) => {
     setVoiceKeyState(key);
@@ -188,7 +200,11 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
         // Only apply if not superseded by a newer transcription (e.g. the final one).
         if (gen !== liveGenRef.current) return;
         if (data.ok && data.text) {
-          onTranscript(data.text.trim());
+          const text = data.text.trim();
+          // Live ticks refresh the draft; the closing clip is what gets sent.
+          if (isLive) onTranscript(text);
+          else if (onFinalize) onFinalize(text);
+          else onTranscript(text);
         } else if (!isLive) {
           // A final clip that produced no speech: insert a period so the field
           // isn't left silently empty (the user can review/clear it).
@@ -199,12 +215,16 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
         // ignore transient errors on live ticks; end-of-recording handles errors
       }
     },
-    [onTranscript, onError],
+    [onTranscript, onFinalize, onError],
   );
 
-  // Commit whatever was captured and hand it to the composer.
+  // Commit whatever was captured and hand it to the caller. Push-to-talk only
+  // reaches here once the user has *closed* the recording, so this is the
+  // single place a spoken turn is actually sent.
   const finalizeCapture = useCallback(() => {
     liveGenRef.current += 1; // invalidate any in-flight server fallback tick
+    sessionRef.current = false;
+    wantListeningRef.current = false;
     setListening(false);
     const text =
       finalRef.current +
@@ -216,15 +236,22 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
     finalRef.current = "";
     interimRef.current = "";
     if (text.trim()) {
-      onTranscript(text.trim());
+      const clean = text.trim();
+      if (onFinalize) onFinalize(clean);
+      else onTranscript(clean);
     } else if (!skipPlaceholder) {
       // No speech was captured: insert a period so the field isn't left
-      // silently empty (the user can review/clear it).
+      // silently empty (the user can review/clear it). Nothing is sent.
       onTranscript(".");
     }
-  }, [onTranscript]);
+  }, [onTranscript, onFinalize]);
 
   const stopRecognition = useCallback(() => {
+    wantListeningRef.current = false;
+    if (wsRestartRef.current !== null) {
+      window.clearTimeout(wsRestartRef.current);
+      wsRestartRef.current = null;
+    }
     if (recognitionRef.current) {
       try {
         recognitionRef.current.abort();
@@ -237,19 +264,27 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
 
   // Primary path: browser Web Speech API (SpeechRecognition). No server call,
   // so transcription works without GROQ_API_KEY.
+  //
+  // The recognizer runs in continuous mode and re-arms itself whenever the
+  // browser pauses it, so the mic stays open after each phrase until the user
+  // explicitly closes the recording.
   const startWebSpeech = useCallback(() => {
     const SR = getNativeRecognition();
     if (!SR) return false;
     finalRef.current = "";
     interimRef.current = "";
     skipPlaceholderRef.current = false;
-    try {
+    wantListeningRef.current = true;
+
+    const attach = (): boolean => {
+      if (!wantListeningRef.current) return true;
       const recognition = new SR();
       recognition.lang = "en-US";
-      recognition.continuous = false;
+      recognition.continuous = true;
       recognition.interimResults = true;
 
       recognition.onresult = (ev) => {
+        if (!wantListeningRef.current) return;
         const e = ev as {
           resultIndex: number;
           results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>;
@@ -275,9 +310,10 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
       recognition.onerror = (ev) => {
         const e = ev as { error?: string };
         // Permission problems: stop cleanly and surface the error. Other
-        // errors ('no-speech', 'aborted', …) are finalized in onend.
+        // errors ('no-speech', 'aborted', …) are recovered in onend.
         if (e.error === "not-allowed" || e.error === "service-not-allowed") {
           skipPlaceholderRef.current = true;
+          wantListeningRef.current = false;
           stopRecognition();
           onError?.("Microphone access denied.");
         }
@@ -285,18 +321,31 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
 
       recognition.onend = () => {
         recognitionRef.current = null;
+        if (wantListeningRef.current) {
+          // Chrome/Edge stop the recognizer after a pause in the audio. Re-arm
+          // it so the capture session survives natural silence.
+          wsRestartRef.current = window.setTimeout(() => {
+            wsRestartRef.current = null;
+            if (wantListeningRef.current) attach();
+          }, 200);
+          return;
+        }
         finalizeCapture();
       };
 
-      recognition.start();
-      recognitionRef.current = recognition;
-      setListening(true);
-      return true;
-    } catch (err) {
-      console.error("[voice] Web Speech start failed", err);
-      stopRecognition();
-      return false;
-    }
+      try {
+        recognition.start();
+        recognitionRef.current = recognition;
+        setListening(true);
+        return true;
+      } catch (err) {
+        console.error("[voice] Web Speech start failed", err);
+        wantListeningRef.current = false;
+        return false;
+      }
+    };
+
+    return attach();
   }, [onTranscript, onError, stopRecognition, finalizeCapture]);
 
   // Fallback for browsers without the Web Speech API: MediaRecorder + the
@@ -375,6 +424,7 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
         window.clearInterval(liveTimer);
         void audioCtx.close().catch(() => {});
         stream.getTracks().forEach((t) => t.stop());
+        sessionRef.current = false;
         setListening(false);
         mediaRef.current = null;
         // Bump generation so any in-flight live tick cannot overwrite the final.
@@ -407,6 +457,7 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
   const begin = useCallback(async () => {
     if (listening) return;
     stopSpeaking();
+    sessionRef.current = true;
     setListening(true);
 
     // Prefer the browser Web Speech API so transcription works without a
@@ -417,8 +468,21 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
     await beginFallback();
   }, [listening, stopSpeaking, startWebSpeech, beginFallback]);
 
+  /**
+   * Closes the capture session. This is the "send" gesture: the recognizer is
+   * asked to finish, its trailing result is folded in, and only then is the
+   * captured text handed to `onFinalize` for sending.
+   */
   const end = useCallback(() => {
+    if (!sessionRef.current) return;
+    sessionRef.current = false;
+    wantListeningRef.current = false;
+    if (wsRestartRef.current !== null) {
+      window.clearTimeout(wsRestartRef.current);
+      wsRestartRef.current = null;
+    }
     if (recognitionRef.current) {
+      // onend fires after any pending result is delivered, then finalizes.
       try {
         recognitionRef.current.stop();
       } catch {
@@ -430,8 +494,9 @@ export function useVoice({ onTranscript, onError }: UseVoiceOptions) {
       mediaRef.current.stop();
       return;
     }
-    setListening(false);
-  }, []);
+    // The recognizer had already ended on its own — commit what we have.
+    finalizeCapture();
+  }, [finalizeCapture]);
 
   const toggle = useCallback(() => {
     if (listening) end();

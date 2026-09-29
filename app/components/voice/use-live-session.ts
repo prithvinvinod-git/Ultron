@@ -1,6 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  activityPhrase,
+  isStopPhrase,
+  looksLikeEcho,
+  thinkingFiller,
+} from "@/lib/activity";
+import type { ActivityKind } from "@/ai/types";
 
 export type LiveStatus = "idle" | "listening" | "thinking" | "speaking";
 
@@ -9,6 +16,8 @@ export interface UseLiveSessionOptions {
   onTurn: (text: string) => Promise<string | null>;
   speak: (text: string) => Promise<void>;
   stopSpeaking: () => void;
+  /** Abandons whatever the agent is currently doing (used for barge-in). */
+  onInterrupt?: () => void;
   onError?: (message: string) => void;
 }
 
@@ -49,29 +58,39 @@ function blobToBase64(blob: Blob): Promise<string> {
  * listens, sends each spoken turn to the agent, speaks the reply, then returns
  * to listening. Only `stop()` ends the session.
  *
- * Barge-in: a turn spoken while the assistant is talking interrupts it, with a
- * short grace window so the mic doesn't trigger on its own speaker output.
+ * While Ultron is working or talking the microphone stays OPEN so the user can
+ * barge in: saying "stop" (or anything else that isn't an echo of the
+ * read-out) cuts in, abandons the current turn, and takes the new command.
  */
 export function useLiveSession({
   onTurn,
   speak,
   stopSpeaking,
+  onInterrupt,
   onError,
 }: UseLiveSessionOptions) {
   const [status, setStatus] = useState<LiveStatus>("idle");
   const [subtitle, setSubtitle] = useState("");
+  const [activity, setActivity] = useState<ActivityKind | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const activeRef = useRef(false);
   const stoppingRef = useRef(false);
   const statusRef = useRef<LiveStatus>("idle");
+  const activityRef = useRef<ActivityKind | null>(null);
   const turnBufferRef = useRef("");
-  const queuedRef = useRef("");
   const dispatchTimerRef = useRef<number | null>(null);
   const restartTimerRef = useRef<number | null>(null);
+  const fillerTimerRef = useRef<number | null>(null);
   const speakStartedAtRef = useRef(0);
+  const spokenTextRef = useRef("");
   const recognitionRef = useRef<NativeRecognition | null>(null);
-  const micPausedRef = useRef(false);
+  const phraseIndexRef = useRef(0);
+  const fillerIndexRef = useRef(0);
+
+  // Serialised TTS so fillers never overlap each other or the reply.
+  const speechChainRef = useRef<Promise<void>>(Promise.resolve());
+  const speechGenRef = useRef(0);
 
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -85,12 +104,14 @@ export function useLiveSession({
   const onTurnRef = useRef(onTurn);
   const speakRef = useRef(speak);
   const stopSpeakingRef = useRef(stopSpeaking);
+  const onInterruptRef = useRef(onInterrupt);
   const onErrorRef = useRef(onError);
 
   useEffect(() => {
     onTurnRef.current = onTurn;
     speakRef.current = speak;
     stopSpeakingRef.current = stopSpeaking;
+    onInterruptRef.current = onInterrupt;
     onErrorRef.current = onError;
   });
 
@@ -99,73 +120,132 @@ export function useLiveSession({
     setStatus(next);
   }, []);
 
-  // Pause microphone capture / recognition while the assistant is speaking so
-  // it can't transcribe its own voice back into the conversation (echo).
-  const pauseMic = useCallback(() => {
-    micPausedRef.current = true;
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort();
-      } catch {
-        // ignore
-      }
-      recognitionRef.current = null;
+  /** Queues a short spoken line, ignoring anything queued before this call. */
+  const sayStatus = useCallback((text: string) => {
+    const gen = ++speechGenRef.current;
+    speechChainRef.current = speechChainRef.current
+      .then(async () => {
+        // A newer status (or the real reply) superseded this one — drop it.
+        if (gen !== speechGenRef.current && statusRef.current !== "thinking") return;
+        await speakRef.current(text);
+      })
+      .catch(() => {});
+  }, []);
+
+  const stopFillers = useCallback(() => {
+    if (fillerTimerRef.current !== null) {
+      window.clearInterval(fillerTimerRef.current);
+      fillerTimerRef.current = null;
     }
   }, []);
 
-  const resumeMic = useCallback(() => {
-    // Settle window: the tail of the assistant's speech can briefly bleed into
-    // the mic after playback ends, so re-arm STT a moment later.
-    window.setTimeout(() => {
-      micPausedRef.current = false;
-      if (
-        activeRef.current &&
-        !stoppingRef.current &&
-        statusRef.current === "listening" &&
-        !recognitionRef.current
-      ) {
-        if (getNativeRecognition()) startRecognition();
-      }
-    }, 700);
-  }, [startRecognition]);
+  const startFillers = useCallback(() => {
+    stopFillers();
+    fillerTimerRef.current = window.setInterval(() => {
+      if (!activeRef.current || statusRef.current !== "thinking") return;
+      sayStatus(thinkingFiller(fillerIndexRef.current++));
+    }, 4500);
+  }, [sayStatus, stopFillers]);
+
+  /**
+   * Publishes what Ultron is doing. The status line always updates, but we only
+   * *speak* when the kind of work changes so a long turn doesn't chatter.
+   */
+  const announce = useCallback(
+    (next: ActivityKind, options?: { silent?: boolean }) => {
+      if (!activeRef.current) return;
+      const previous = activityRef.current;
+      activityRef.current = next;
+      setActivity(next);
+      if (next !== "thinking") stopFillers();
+      if (options?.silent) return;
+      // Only speak when the kind of work actually changes, so a long turn
+      // doesn't chatter the same line over and over.
+      if (previous === next) return;
+      sayStatus(activityPhrase(next, phraseIndexRef.current++));
+    },
+    [sayStatus, stopFillers],
+  );
+
+  const clearFillers = useCallback(() => stopFillers(), [stopFillers]);
 
   const handleTurn = useCallback(
-    async (text: string): Promise<boolean> => {
+    async (text: string): Promise<void> => {
       const clean = text.trim();
-      if (!clean) return true;
-      if (statusRef.current === "thinking") return false;
+      if (!clean) return;
       setSubtitle("");
       setStatusSafe("thinking");
+      announce("thinking", { silent: true });
+      startFillers();
       try {
         const reply = await onTurnRef.current(clean);
-        if (!activeRef.current) return true;
+        clearFillers();
+        if (!activeRef.current) return;
         if (reply && reply.trim()) {
+          // Invalidate any queued filler so the reply is the only thing spoken.
+          speechGenRef.current += 1;
           setStatusSafe("speaking");
           speakStartedAtRef.current = Date.now();
-          pauseMic();
+          spokenTextRef.current = reply;
+          activityRef.current = null;
+          setActivity(null);
           try {
             await speakRef.current(reply);
           } finally {
-            resumeMic();
+            spokenTextRef.current = "";
           }
         }
-        if (!activeRef.current) return true;
+        if (!activeRef.current) return;
         setStatusSafe("listening");
       } catch {
+        clearFillers();
         onErrorRef.current?.("Live conversation failed. Switched back to listening.");
         if (activeRef.current) setStatusSafe("listening");
       }
-      return true;
     },
-    [setStatusSafe, pauseMic, resumeMic],
+    [setStatusSafe, announce, startFillers, clearFillers],
   );
 
-  const flushQueued = useCallback(async () => {
-    const queued = queuedRef.current.trim();
-    if (!queued || statusRef.current !== "listening") return;
-    queuedRef.current = "";
-    await handleTurn(queued);
-  }, [handleTurn]);
+  /**
+   * Called for anything heard while Ultron is speaking or thinking.
+   * "stop" cancels; anything else is treated as a new command that abandons
+   * the current turn — unless it is just the read-out echoing back.
+   */
+  const handleBargeIn = useCallback(
+    (heard: string) => {
+      const text = heard.trim();
+      if (!text) return;
+
+      if (isStopPhrase(text)) {
+        clearFillers();
+        stopSpeakingRef.current();
+        onInterruptRef.current?.();
+        turnBufferRef.current = "";
+        spokenTextRef.current = "";
+        activityRef.current = null;
+        setActivity(null);
+        if (activeRef.current) setStatusSafe("listening");
+        return;
+      }
+
+      const words = text.split(/\s+/).filter(Boolean).length;
+      if (words < 2) return;
+
+      // Ignore the tail of our own voice coming back through the mic.
+      if (statusRef.current === "speaking") {
+        if (Date.now() - speakStartedAtRef.current < 700) return;
+        if (looksLikeEcho(spokenTextRef.current, text)) return;
+      }
+
+      // A real new command: abandon whatever is in flight and take this one.
+      clearFillers();
+      stopSpeakingRef.current();
+      onInterruptRef.current?.();
+      turnBufferRef.current = "";
+      void handleTurn(text);
+    },
+    [clearFillers, handleTurn, setStatusSafe],
+  );
 
   const dispatchBuffer = useCallback(async () => {
     if (dispatchTimerRef.current !== null) {
@@ -175,15 +255,6 @@ export function useLiveSession({
     const buffer = turnBufferRef.current.trim();
     if (!buffer) return;
     turnBufferRef.current = "";
-    if (statusRef.current === "thinking") {
-      queuedRef.current = buffer;
-      return;
-    }
-    if (statusRef.current === "speaking") {
-      const elapsed = Date.now() - speakStartedAtRef.current;
-      if (elapsed < 500) return;
-      stopSpeakingRef.current();
-    }
     await handleTurn(buffer);
   }, [handleTurn]);
 
@@ -194,8 +265,83 @@ export function useLiveSession({
     dispatchTimerRef.current = window.setTimeout(() => {
       dispatchTimerRef.current = null;
       void dispatchBuffer();
-    }, 450);
+    }, 700);
   }, [dispatchBuffer]);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- hoisted function declaration, identity changes per render (kept as-is)
+  function startRecognition() {
+    if (!activeRef.current || stoppingRef.current) return;
+    const SR = getNativeRecognition();
+    if (!SR) {
+      void startFallback();
+      return;
+    }
+    const recognition = new SR();
+    recognition.lang = "en-US";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    recognition.onresult = (ev) => {
+      if (!activeRef.current) return;
+      const e = ev as {
+        resultIndex: number;
+        results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>;
+      };
+      let finals = "";
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const result = e.results[i];
+        const text = result[0].transcript;
+        if (result.isFinal) finals += (finals ? " " : "") + text;
+        else interim += text;
+      }
+      const heard = `${finals} ${interim}`.replace(/\s+/g, " ").trim();
+      const state = statusRef.current;
+
+      // While working or talking, the mic is only there for barge-in.
+      if (state === "speaking" || state === "thinking") {
+        if (heard) {
+          setSubtitle(heard);
+          handleBargeIn(heard);
+        }
+        return;
+      }
+
+      if (finals.trim()) {
+        turnBufferRef.current = turnBufferRef.current.trim()
+          ? `${turnBufferRef.current.trim()} ${finals.trim()}`
+          : finals.trim();
+        scheduleDispatch();
+      }
+      setSubtitle(interim.trim() || turnBufferRef.current.trim());
+    };
+
+    recognition.onerror = () => {
+      // onend restarts the session when appropriate.
+    };
+
+    recognition.onend = () => {
+      recognitionRef.current = null;
+      if (
+        activeRef.current &&
+        !stoppingRef.current &&
+        restartTimerRef.current === null
+      ) {
+        restartTimerRef.current = window.setTimeout(() => {
+          restartTimerRef.current = null;
+          if (activeRef.current && !stoppingRef.current) startRecognition();
+        }, 250);
+      }
+    };
+
+    try {
+      recognition.start();
+      recognitionRef.current = recognition;
+      if (statusRef.current === "idle") setStatusSafe("listening");
+    } catch {
+      void startFallback();
+    }
+  }
 
   const transcribeFallback = useCallback(async () => {
     const chunks = segmentChunksRef.current;
@@ -211,14 +357,15 @@ export function useLiveSession({
         body: JSON.stringify({ audio: b64, mimeType: mime }),
       });
       const data = (await res.json()) as { ok?: boolean; text?: string };
-      if (data.ok && data.text?.trim()) {
-        if (statusRef.current === "listening") {
-          await handleTurn(data.text);
-        } else {
-          queuedRef.current = queuedRef.current.trim()
-            ? `${queuedRef.current.trim()} ${data.text.trim()}`
-            : data.text.trim();
-        }
+      const text = data.ok ? (data.text ?? "").trim() : "";
+      if (!text) return;
+      if (statusRef.current === "speaking" || statusRef.current === "thinking") {
+        handleBargeIn(text);
+      } else {
+        turnBufferRef.current = turnBufferRef.current.trim()
+          ? `${turnBufferRef.current.trim()} ${text}`
+          : text;
+        scheduleDispatch();
       }
     } catch {
       onErrorRef.current?.("Voice transcription failed.");
@@ -226,7 +373,7 @@ export function useLiveSession({
     if (activeRef.current && statusRef.current === "idle") {
       setStatusSafe("listening");
     }
-  }, [handleTurn, setStatusSafe]);
+  }, [handleBargeIn, scheduleDispatch, setStatusSafe]);
 
   const startRecorder = useCallback(() => {
     if (!streamRef.current) return;
@@ -236,7 +383,6 @@ export function useLiveSession({
       if (e.data.size) segmentChunksRef.current.push(e.data);
     };
     recorder.onstop = () => {
-      // Requeued automatically when the agent is still busy.
       if (!activeRef.current) return;
       void transcribeFallback();
     };
@@ -269,22 +415,17 @@ export function useLiveSession({
       startRecorder();
       vadIdRef.current = window.setInterval(() => {
         if (!activeRef.current || !analyserRef.current) return;
-        if (micPausedRef.current || statusRef.current !== "listening") {
-          speechActiveRef.current = false;
-          lastSpeechAtRef.current = null;
-          return;
-        }
         const buf = new Float32Array(analyserRef.current.fftSize);
         analyserRef.current.getFloatTimeDomainData(buf);
         let sum = 0;
         for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
         const rms = Math.sqrt(sum / buf.length);
-        if (rms > 0.014) {
+        if (rms > 0.02) {
           speechActiveRef.current = true;
           lastSpeechAtRef.current = Date.now();
         } else if (
           speechActiveRef.current &&
-          Date.now() - (lastSpeechAtRef.current ?? 0) > 900
+          Date.now() - (lastSpeechAtRef.current ?? 0) > 700
         ) {
           speechActiveRef.current = false;
           lastSpeechAtRef.current = null;
@@ -298,70 +439,6 @@ export function useLiveSession({
       setStatusSafe("idle");
     }
   }, [startRecorder, setStatusSafe]);
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- hoisted function declaration, identity changes per render (kept as-is)
-  function startRecognition() {
-    if (!activeRef.current || stoppingRef.current || micPausedRef.current) return;
-    const SR = getNativeRecognition();
-    if (!SR) {
-      void startFallback();
-      return;
-    }
-    const recognition = new SR();
-    recognition.lang = "en-US";
-    recognition.continuous = true;
-    recognition.interimResults = true;
-
-    recognition.onresult = (ev) => {
-      if (!activeRef.current) return;
-      const e = ev as {
-        resultIndex: number;
-        results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>;
-      };
-      let finals = "";
-      let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const result = e.results[i];
-        const text = result[0].transcript;
-        if (result.isFinal) finals += (finals ? " " : "") + text;
-        else interim += text;
-      }
-      if (finals.trim()) {
-        turnBufferRef.current = turnBufferRef.current.trim()
-          ? `${turnBufferRef.current.trim()} ${finals.trim()}`
-          : finals.trim();
-        scheduleDispatch();
-      }
-      setSubtitle(interim.trim() || turnBufferRef.current.trim());
-    };
-
-    recognition.onerror = () => {
-      // onend restarts the session when appropriate.
-    };
-
-    recognition.onend = () => {
-      recognitionRef.current = null;
-      if (
-        activeRef.current &&
-        !stoppingRef.current &&
-        !micPausedRef.current &&
-        restartTimerRef.current === null
-      ) {
-        restartTimerRef.current = window.setTimeout(() => {
-          restartTimerRef.current = null;
-          if (activeRef.current && !stoppingRef.current) startRecognition();
-        }, 300);
-      }
-    };
-
-    try {
-      recognition.start();
-      recognitionRef.current = recognition;
-      if (statusRef.current === "idle") setStatusSafe("listening");
-    } catch {
-      void startFallback();
-    }
-  }
 
   const endFallbackResources = useCallback(() => {
     if (vadIdRef.current !== null) {
@@ -389,6 +466,8 @@ export function useLiveSession({
     stoppingRef.current = false;
     setError(null);
     setSubtitle("");
+    activityRef.current = null;
+    setActivity(null);
     setStatusSafe("listening");
     if (getNativeRecognition()) startRecognition();
     else void startFallback();
@@ -397,6 +476,7 @@ export function useLiveSession({
   const stop = useCallback(() => {
     stoppingRef.current = true;
     activeRef.current = false;
+    clearFillers();
     if (dispatchTimerRef.current !== null) {
       window.clearTimeout(dispatchTimerRef.current);
       dispatchTimerRef.current = null;
@@ -413,22 +493,20 @@ export function useLiveSession({
     recognitionRef.current = null;
     endFallbackResources();
     stopSpeakingRef.current();
+    onInterruptRef.current?.();
     turnBufferRef.current = "";
-    queuedRef.current = "";
+    spokenTextRef.current = "";
+    activityRef.current = null;
+    setActivity(null);
     setSubtitle("");
     setStatusSafe("idle");
-  }, [endFallbackResources, setStatusSafe]);
-
-  useEffect(() => {
-    if (status === "listening" && queuedRef.current.trim()) {
-      void flushQueued();
-    }
-  }, [status, flushQueued]);
+  }, [endFallbackResources, setStatusSafe, clearFillers]);
 
   useEffect(() => {
     return () => {
       stoppingRef.current = true;
       activeRef.current = false;
+      clearFillers();
       if (dispatchTimerRef.current !== null) {
         window.clearTimeout(dispatchTimerRef.current);
       }
@@ -436,12 +514,14 @@ export function useLiveSession({
         window.clearTimeout(restartTimerRef.current);
       }
     };
-  }, []);
+  }, [clearFillers]);
 
   return {
     status,
     subtitle,
     error,
+    activity,
+    announce,
     start,
     stop,
   };

@@ -17,7 +17,7 @@ import { SuggestionCards } from "@/app/components/chat/suggestion-cards";
 import { useVoice } from "@/app/components/voice/use-voice";
 import { useLiveSession } from "@/app/components/voice/use-live-session";
 import { LiveMode } from "@/app/components/voice/live-mode";
-import type { ChatEvent } from "@/ai/types";
+import type { ActivityKind, ChatEvent } from "@/ai/types";
 
 interface SessionTranscript {
   role: "user" | "assistant";
@@ -74,13 +74,23 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   const activeIdRef = useRef<string | null>(null);
   const activeTextRef = useRef("");
   const abortRef = useRef<AbortController | null>(null);
+  /** Mirrors `streaming` synchronously so a barge-in can start a new turn at once. */
+  const streamingRef = useRef(false);
+  const submitRef = useRef<(text: string) => Promise<string>>(async () => "");
+  const announceRef = useRef<((activity: ActivityKind) => void) | null>(null);
   const sessionIdRef = useRef<string | null>(initialSessionId);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const stickRef = useRef(true);
 
   const { listening, speaking, speak, begin, end, stopSpeaking, cleanupStreams, voiceKey, setVoiceKey } =
     useVoice({
+      // Live draft while the mic is open…
       onTranscript: (text) => setDraft(text),
+      // …and the send gesture: closing the recording hands the text to the agent.
+      onFinalize: (text) => {
+        setDraft("");
+        void submitRef.current(text);
+      },
       onError: (message) => setError(message),
     });
 
@@ -254,6 +264,11 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
           ),
         );
         break;
+      case "activity":
+        // Live mode mirrors the agent's status (thinking / searching / …) and
+        // speaks it; the typed chat is unaffected.
+        announceRef.current?.(event.activity);
+        break;
       case "memory":
         break;
       case "done":
@@ -271,6 +286,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
           ),
         );
         activeTextRef.current = event.content ?? activeTextRef.current;
+        streamingRef.current = false;
         setStreaming(false);
         break;
       case "error":
@@ -279,6 +295,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
             m.id === id ? { ...m, streaming: false, error: event.message } : m,
           ),
         );
+        streamingRef.current = false;
         setStreaming(false);
         break;
     }
@@ -287,7 +304,9 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   const submit = useCallback(
     async (raw: string) => {
       const text = raw.trim();
-      if (!text || streaming) return "";
+      // Guard on the ref, not the `streaming` state: barge-in aborts and
+      // re-submits within the same tick, before React has re-rendered.
+      if (!text || streamingRef.current) return "";
       setError(null);
       stickRef.current = true;
       activeTextRef.current = "";
@@ -306,6 +325,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
       if (!sessionIdRef.current) setSessionId(sid);
       setHydrating(false);
       setTranscript((prev) => [...prev, userMsg, assistantMsg]);
+      streamingRef.current = true;
       setStreaming(true);
 
       const sendHistory = historyRef.current;
@@ -358,13 +378,27 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
         const message = err instanceof Error ? err.message : String(err);
         applyEvent({ type: "error", message });
       } finally {
+        streamingRef.current = false;
         setStreaming(false);
         abortRef.current = null;
       }
       return activeTextRef.current || "";
     },
-    [streaming, applyEvent],
+    [applyEvent],
   );
+
+  useEffect(() => {
+    submitRef.current = submit;
+  }, [submit]);
+
+  /** Barge-in: drop whatever is in flight so a new command can take over now. */
+  const interruptActive = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    streamingRef.current = false;
+    activeTextRef.current = "";
+    setStreaming(false);
+  }, []);
 
   const liveOnTurn = useCallback(
     async (text: string) => {
@@ -378,8 +412,13 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
     onTurn: liveOnTurn,
     speak,
     stopSpeaking,
+    onInterrupt: interruptActive,
     onError: (message) => setError(message),
   });
+
+  useEffect(() => {
+    announceRef.current = liveSession.announce;
+  }, [liveSession.announce]);
 
   const startLive = useCallback(() => {
     setError(null);
@@ -441,6 +480,8 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
           {live ? (
             <LiveMode
               status={liveSession.status}
+              activity={liveSession.activity}
+              subtitle={liveSession.subtitle}
               captions={liveCaptions}
               onStop={() => {
                 liveSession.stop();

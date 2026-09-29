@@ -10,6 +10,20 @@ import type {
 
 type OpenAIMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
+/**
+ * Parses a comma-separated model fallback list from the environment, dropping
+ * blanks and the default model (which is always tried first).
+ */
+export function parseModelList(
+  raw: string | undefined,
+  exclude?: string,
+): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((m) => m.trim())
+    .filter((m) => m.length > 0 && m !== exclude);
+}
+
 export function toOpenAIMessage(message: ChatMessage): OpenAIMessage {
   switch (message.role) {
     case "system":

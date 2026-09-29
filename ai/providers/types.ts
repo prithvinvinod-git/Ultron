@@ -7,6 +7,11 @@ export interface ProviderConfig {
   baseURL: string;
   apiKey: string;
   defaultModel: string;
+  /**
+   * Sibling models to try when `defaultModel` is rate-limited. Free tiers are
+   * metered per model, so this keeps a provider usable past one model's cap.
+   */
+  fallbackModels?: string[];
   docs?: string;
 }
 
