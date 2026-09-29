@@ -67,7 +67,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   const [draft, setDraft] = useState("");
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const [voices, setVoices] = useState<
-    { key: string; name: string; accent: string; engine: string; gender: string }[]
+    { key: string; name: string; accent: string; engine: string; gender: string; note?: string }[]
   >([]);
 
   const historyRef = useRef<{ role: "user" | "assistant"; content: string }[]>([]);

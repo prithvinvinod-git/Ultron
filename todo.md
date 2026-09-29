@@ -1473,3 +1473,32 @@ Steps to integrate
  2. Fill image assets with Unsplash stock images you know exist
  3. Use lucide-react icons for svgs or logos if component requires them
 
+---
+
+# Ultron agent — work log
+
+_Appended 2026-09-30. Commits `f01e2ab`, `b0f3509` (both pushed, deployed to https://ultron-ai-ten.vercel.app)._
+
+## Done (deployed + verified in production)
+
+- [x] TTS: per-voice prosody wiring, voice `note` passthrough, browser fallback picker (prefers Natural/Online voices)
+- [x] Fix live-mode bug: status words looped and the returned reply was never spoken
+- [x] Speak a single status word once per command; at most one long-wait line (replaces the 4.5s filler loop)
+- [x] Slash-command tool suggestions in the composer (typing `/` lists tools from `GET /api/tools`)
+- [x] Enter key sends the prompt (Shift+Enter newline; IME/modifier safe, no double-submit)
+- [x] Delete probe scripts (`probe-*.cjs`) and temp secret artifacts
+- [x] `tsc --noEmit`, `eslint`, and `next build` all clean; production chat returns a real answer
+
+## Pending
+
+- [ ] **Next:** Give the AI a personality, humor, and emotionality (persona in both text replies and spoken voice)
+- [ ] Reduce voice latency: there is still a delay before speech starts even after the reply has arrived (TTS is buffered — no audio streaming / no speak-while-generating)
+- [ ] Fix live streaming of returns (reply text/audio should stream out as it is produced, not only once complete)
+- [ ] Tool calls: show real elapsed time while working (e.g. "worked 12s"), with a live timer per step/turn rather than an indeterminate spinner
+- [ ] Browser-audition voice quality + slash menu, barge-in, and push-to-talk auto-send
+
+## Notes
+
+- Free Edge TTS rejects `mstts:express-as` and `<break>`; expressive delivery is unavailable for free.
+- ElevenLabs (10k chars/mo free) is the only zero-cost step up and activates automatically once `ELEVENLABS_API_KEY` is set.
+

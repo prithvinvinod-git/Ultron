@@ -25,7 +25,7 @@ export function Composer({
   onBeginVoice: () => void;
   onEndVoice: () => void;
   onToggleLive?: () => void;
-  voices?: { key: string; name: string; accent: string; engine: string; gender: string }[];
+  voices?: { key: string; name: string; accent: string; engine: string; gender: string; note?: string }[];
   voiceKey?: string;
   onVoiceChange?: (key: string) => void;
 }) {
