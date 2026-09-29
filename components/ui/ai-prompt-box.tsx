@@ -598,7 +598,7 @@ export const PromptInputBox = React.forwardRef<
    * Slash commands: typing "/" offers the agent's tools.
    * ------------------------------------------------------------------ */
   const [tools, setTools] = React.useState<SlashTool[]>([]);
-  const [slashOpen, setSlashOpen] = React.useState(false);
+  const [dismissedQuery, setDismissedQuery] = React.useState<string | null>(null);
   const [slashSel, setSlashSel] = React.useState({ query: "", index: 0 });
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const toolsLoadedRef = React.useRef(false);
@@ -608,9 +608,18 @@ export const PromptInputBox = React.forwardRef<
     setValueRef.current = setValue;
   });
 
-  // Load the catalogue once, the first time the menu is opened.
+  // Only treat it as a slash command while the "/" is still the first token and
+  // nothing has been typed after it but the query.
+  const slashQuery = React.useMemo(() => {
+    if (!value.startsWith("/")) return null;
+    if (value.includes("\n")) return null;
+    const match = value.slice(1).match(/^([\w-]*)$/);
+    return match ? match[1] : null;
+  }, [value]);
+
+  // Load the catalogue once, the first time a "/" is typed.
   React.useEffect(() => {
-    if (!slashOpen || toolsLoadedRef.current) return;
+    if (slashQuery === null || toolsLoadedRef.current) return;
     toolsLoadedRef.current = true;
     let cancelled = false;
     fetch("/api/tools")
@@ -622,16 +631,7 @@ export const PromptInputBox = React.forwardRef<
     return () => {
       cancelled = true;
     };
-  }, [slashOpen]);
-
-  // Only treat it as a slash command while the "/" is still the first token and
-  // nothing has been typed after it but the query.
-  const slashQuery = React.useMemo(() => {
-    if (!value.startsWith("/")) return null;
-    if (value.includes("\n")) return null;
-    const match = value.slice(1).match(/^([\w-]*)$/);
-    return match ? match[1] : null;
-  }, [value]);
+  }, [slashQuery]);
 
   const matches = React.useMemo(() => {
     if (slashQuery === null) return [];
@@ -646,7 +646,10 @@ export const PromptInputBox = React.forwardRef<
       .slice(0, 8);
   }, [tools, slashQuery]);
 
-  const menuOpen = slashOpen && slashQuery !== null && matches.length > 0;
+  // Open whenever the composer is being used as a slash command. Escape
+  // dismisses the query it was open on; typing on brings it back.
+  const menuOpen =
+    slashQuery !== null && matches.length > 0 && dismissedQuery !== slashQuery;
 
   // The highlight is remembered per query, so typing filters it back to the top
   // without an effect that would re-render in a loop.
@@ -669,7 +672,7 @@ export const PromptInputBox = React.forwardRef<
   const applySlashTool = React.useCallback(
     (tool: SlashTool) => {
       setValueRef.current(`/${tool.name} `);
-      setSlashOpen(false);
+      setDismissedQuery(null);
       setSlashSel({ query: "", index: 0 });
       // Keep the caret in the box so the user can finish the request.
       requestAnimationFrame(() => textareaRef.current?.focus());
@@ -679,13 +682,7 @@ export const PromptInputBox = React.forwardRef<
 
   const onSlashKeyDown = React.useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
-      if (!menuOpen) {
-        if (e.key === "Escape" && slashOpen) {
-          setSlashOpen(false);
-          return true;
-        }
-        return false;
-      }
+      if (!menuOpen) return false;
       if (e.key === "ArrowDown" || (e.key === "n" && e.ctrlKey)) {
         e.preventDefault();
         setSlashIndex((i) => (i + 1) % matches.length);
@@ -704,12 +701,12 @@ export const PromptInputBox = React.forwardRef<
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        setSlashOpen(false);
+        setDismissedQuery(slashQuery);
         return true;
       }
       return false;
     },
-    [menuOpen, slashOpen, matches, slashIndex, setSlashIndex, applySlashTool],
+    [menuOpen, slashQuery, matches, slashIndex, setSlashIndex, applySlashTool],
   );
 
   const hasContent = value.trim() !== "" || files.length > 0;
