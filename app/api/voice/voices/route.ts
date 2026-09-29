@@ -11,6 +11,7 @@ export async function GET() {
     gender: v.gender,
     locale: v.locale,
     accent: v.accent,
+    note: v.note,
   }));
   return Response.json({ voices });
 }

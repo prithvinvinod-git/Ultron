@@ -27,21 +27,54 @@ export interface TtsVoiceDef {
   accent: string;
   /** Engine-specific voice id (Edge short name or ElevenLabs voice id). */
   id: string;
+  /** Short character description shown in the voice picker. */
+  note?: string;
+  /**
+   * Per-voice prosody. The free Edge endpoint accepts plain text and `<prosody>`
+   * only (it rejects `mstts:express-as` and `<break>`), so pacing and pitch are
+   * the levers that actually shape the delivery. Verified against the live
+   * endpoint — don't add unsupported SSML here.
+   */
+  prosody?: { rate: number; pitch: string; volume?: string };
 }
 
+/**
+ * Free, no-API-key voices. Ordered best-first: the newer "Multilingual"
+ * generation sounds noticeably more lifelike than the classic Aria/Jenny set,
+ * and every entry is tuned for a measured, assistant-like delivery.
+ */
 export const EDGE_VOICES: TtsVoiceDef[] = [
-  { key: "aria", engine: "edge", name: "Aria", gender: "female", locale: "en-US", accent: "American", id: "en-US-AriaNeural" },
-  { key: "jenny", engine: "edge", name: "Jenny", gender: "female", locale: "en-US", accent: "American", id: "en-US-JennyNeural" },
-  { key: "michelle", engine: "edge", name: "Michelle", gender: "female", locale: "en-US", accent: "American", id: "en-US-MichelleNeural" },
-  { key: "ana", engine: "edge", name: "Ana", gender: "female", locale: "en-US", accent: "American", id: "en-US-AnaNeural" },
-  { key: "guy", engine: "edge", name: "Guy", gender: "male", locale: "en-US", accent: "American", id: "en-US-GuyNeural" },
-  { key: "christopher", engine: "edge", name: "Christopher", gender: "male", locale: "en-US", accent: "American", id: "en-US-ChristopherNeural" },
-  { key: "eric", engine: "edge", name: "Eric", gender: "male", locale: "en-US", accent: "American", id: "en-US-EricNeural" },
-  { key: "sonia", engine: "edge", name: "Sonia", gender: "female", locale: "en-GB", accent: "British", id: "en-GB-SoniaNeural" },
-  { key: "libby", engine: "edge", name: "Libby", gender: "female", locale: "en-GB", accent: "British", id: "en-GB-LibbyNeural" },
-  { key: "ryan", engine: "edge", name: "Ryan", gender: "male", locale: "en-GB", accent: "British", id: "en-GB-RyanNeural" },
-  { key: "natasha", engine: "edge", name: "Natasha", gender: "female", locale: "en-AU", accent: "Australian", id: "en-AU-NatashaNeural" },
-  { key: "william", engine: "edge", name: "William", gender: "male", locale: "en-AU", accent: "Australian", id: "en-AU-WilliamNeural" },
+  // --- Best naturalness: newer multilingual neural models ---
+  { key: "jarvis", engine: "edge", name: "Jarvis", gender: "male", locale: "en-US", accent: "American", id: "en-US-AndrewMultilingualNeural", note: "Measured, composed — classic Jarvis", prosody: { rate: 0.98, pitch: "-2Hz", volume: "+0%" } },
+  { key: "atlas", engine: "edge", name: "Atlas", gender: "male", locale: "en-US", accent: "American", id: "en-US-BrianMultilingualNeural", note: "Warm, grounded narrator", prosody: { rate: 0.97, pitch: "+0Hz", volume: "+0%" } },
+  { key: "ava", engine: "edge", name: "Ava", gender: "female", locale: "en-US", accent: "American", id: "en-US-AvaMultilingualNeural", note: "Bright, articulate assistant", prosody: { rate: 1.0, pitch: "+0Hz", volume: "+0%" } },
+  { key: "emma", engine: "edge", name: "Emma", gender: "female", locale: "en-US", accent: "American", id: "en-US-EmmaMultilingualNeural", note: "Calm, natural cadence", prosody: { rate: 0.99, pitch: "+0Hz", volume: "+0%" } },
+  { key: "andrewnl", engine: "edge", name: "Andrew", gender: "male", locale: "en-US", accent: "American", id: "en-US-AndrewNeural", note: "Even and understated", prosody: { rate: 0.98, pitch: "-1Hz", volume: "+0%" } },
+  { key: "brian", engine: "edge", name: "Brian", gender: "male", locale: "en-US", accent: "American", id: "en-US-BrianNeural", note: "Friendly, unhurried", prosody: { rate: 0.98, pitch: "+0Hz", volume: "+0%" } },
+
+  // --- British ---
+  { key: "sonia", engine: "edge", name: "Sonia", gender: "female", locale: "en-GB", accent: "British", id: "en-GB-SoniaNeural", note: "Poised British assistant", prosody: { rate: 0.99, pitch: "+0Hz", volume: "+0%" } },
+  { key: "libby", engine: "edge", name: "Libby", gender: "female", locale: "en-GB", accent: "British", id: "en-GB-LibbyNeural", note: "Soft, conversational", prosody: { rate: 0.98, pitch: "+0Hz", volume: "+0%" } },
+  { key: "maisie", engine: "edge", name: "Maisie", gender: "female", locale: "en-GB", accent: "British", id: "en-GB-MaisieNeural", note: "Youthful and light", prosody: { rate: 1.0, pitch: "+1Hz", volume: "+0%" } },
+  { key: "ryan", engine: "edge", name: "Ryan", gender: "male", locale: "en-GB", accent: "British", id: "en-GB-RyanNeural", note: "Steady, newsroom clarity", prosody: { rate: 0.97, pitch: "-1Hz", volume: "+0%" } },
+  { key: "thomas", engine: "edge", name: "Thomas", gender: "male", locale: "en-GB", accent: "British", id: "en-GB-ThomasNeural", note: "Calm and low", prosody: { rate: 0.97, pitch: "-2Hz", volume: "+0%" } },
+
+  // --- Other accents ---
+  { key: "natasha", engine: "edge", name: "Natasha", gender: "female", locale: "en-AU", accent: "Australian", id: "en-AU-NatashaNeural", note: "Relaxed, easy-going", prosody: { rate: 1.0, pitch: "+0Hz", volume: "+0%" } },
+  { key: "william", engine: "edge", name: "William", gender: "male", locale: "en-AU", accent: "Australian", id: "en-AU-WilliamMultilingualNeural", note: "Casual and clear", prosody: { rate: 0.99, pitch: "+0Hz", volume: "+0%" } },
+  { key: "emily", engine: "edge", name: "Emily", gender: "female", locale: "en-IE", accent: "Irish", id: "en-IE-EmilyNeural", note: "Lively and quick", prosody: { rate: 1.0, pitch: "+1Hz", volume: "+0%" } },
+  { key: "connor", engine: "edge", name: "Connor", gender: "male", locale: "en-IE", accent: "Irish", id: "en-IE-ConnorNeural", note: "Relaxed, storytelling", prosody: { rate: 0.99, pitch: "+0Hz", volume: "+0%" } },
+  { key: "clara", engine: "edge", name: "Clara", gender: "female", locale: "en-CA", accent: "Canadian", id: "en-CA-ClaraNeural", note: "Warm and gentle", prosody: { rate: 0.99, pitch: "+0Hz", volume: "+0%" } },
+  { key: "liam", engine: "edge", name: "Liam", gender: "male", locale: "en-CA", accent: "Canadian", id: "en-CA-LiamNeural", note: "Friendly, plain", prosody: { rate: 0.99, pitch: "+0Hz", volume: "+0%" } },
+
+  // --- Classic set (kept: these keys are already saved in users' browsers) ---
+  { key: "aria", engine: "edge", name: "Aria", gender: "female", locale: "en-US", accent: "American", id: "en-US-AriaNeural", note: "Clear and energetic", prosody: { rate: 0.98, pitch: "+1Hz", volume: "+0%" } },
+  { key: "jenny", engine: "edge", name: "Jenny", gender: "female", locale: "en-US", accent: "American", id: "en-US-JennyNeural", note: "Neutral and steady", prosody: { rate: 0.98, pitch: "+0Hz", volume: "+0%" } },
+  { key: "michelle", engine: "edge", name: "Michelle", gender: "female", locale: "en-US", accent: "American", id: "en-US-MichelleNeural", note: "Soft and measured", prosody: { rate: 0.98, pitch: "+0Hz", volume: "+0%" } },
+  { key: "ana", engine: "edge", name: "Ana", gender: "female", locale: "en-US", accent: "American", id: "en-US-AnaNeural", note: "Youthful, quick", prosody: { rate: 1.0, pitch: "+1Hz", volume: "+0%" } },
+  { key: "guy", engine: "edge", name: "Guy", gender: "male", locale: "en-US", accent: "American", id: "en-US-GuyNeural", note: "Neutral male", prosody: { rate: 0.98, pitch: "+0Hz", volume: "+0%" } },
+  { key: "christopher", engine: "edge", name: "Christopher", gender: "male", locale: "en-US", accent: "American", id: "en-US-ChristopherNeural", note: "Mature male", prosody: { rate: 0.97, pitch: "-1Hz", volume: "+0%" } },
+  { key: "eric", engine: "edge", name: "Eric", gender: "male", locale: "en-US", accent: "American", id: "en-US-EricNeural", note: "Brisk male", prosody: { rate: 0.99, pitch: "+0Hz", volume: "+0%" } },
 ];
 
 /** ElevenLabs premium voices (used when ELEVENLABS_API_KEY is configured). */
@@ -69,20 +102,26 @@ function escapeSSML(text: string): string {
     .replace(/'/g, "&apos;");
 }
 
+/** Default delivery when a voice has no tuned prosody of its own. */
+const DEFAULT_PROSODY = { rate: 0.99, pitch: "+0Hz", volume: "+0%" };
+
 /** Synthesize with Microsoft Edge Read Aloud (free, no key). */
 async function synthesizeEdge(
   text: string,
-  voiceId: string,
+  voice: TtsVoiceDef,
 ): Promise<SpeechResult | null> {
+  const prosody = voice.prosody ?? DEFAULT_PROSODY;
   try {
     const tts = new MsEdgeTTS();
+    // 48 kbps is plenty for speech and halves the bytes/TTFB versus 96 kbps.
     await tts.setMetadata(
-      voiceId,
-      OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3,
+      voice.id,
+      OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3,
     );
     const { audioStream } = tts.toStream(escapeSSML(text), {
-      rate: 1.02,
-      pitch: "+0Hz",
+      rate: prosody.rate,
+      pitch: prosody.pitch,
+      ...(prosody.volume ? { volume: prosody.volume } : {}),
     });
     const chunks: Buffer[] = [];
     await new Promise<void>((resolve, reject) => {
@@ -207,19 +246,28 @@ async function synthesizeLiveKit(text: string): Promise<SpeechResult | null> {
   }
 }
 
-function resolveVoice(voiceKey: string | undefined): {
-  engine: "edge" | "elevenlabs" | "groq";
-  id: string;
-} {
+/** The voice actually used for synthesis, with its prosody attached. */
+function resolveVoice(voiceKey: string | undefined): TtsVoiceDef {
   const key = voiceKey ?? "aria";
   const match =
     EDGE_VOICES.find((v) => v.key === key) ??
     ELEVEN_VOICES.find((v) => v.key === key);
-  if (match) return { engine: match.engine, id: match.id };
+  if (match) return match;
 
-  // Allow raw engine voice ids (Edge short names) if not a known preset.
-  if (/^en-(?:\w{2})-[A-Z]\w+Neural$/.test(key)) return { engine: "edge", id: key };
-  return { engine: "edge", id: "en-US-AriaNeural" };
+  // Allow a raw Edge voice id (e.g. en-US-AvaMultilingualNeural) if not a
+  // known preset. Prosody falls back to the tuned defaults.
+  if (/^en-(?:\w{2})-[A-Z]\w*Neural$/.test(key)) {
+    return {
+      key,
+      engine: "edge",
+      name: key,
+      gender: "female",
+      locale: "en-US",
+      accent: "Custom",
+      id: key,
+    };
+  }
+  return EDGE_VOICES[0];
 }
 
 /**
@@ -236,33 +284,33 @@ export async function synthesizeSpeech(
   const trimmed = text.trim();
   if (!trimmed) return null;
 
-  const { engine, id } = resolveVoice(options.voice);
+  const voice = resolveVoice(options.voice);
   const forced = process.env.TTS_ENGINE?.toLowerCase();
 
   // Prefer ElevenLabs when the key exists (unless an engine is forced) and
   // the requested/configured voice is ElevenLabs.
   const wantEleven =
     !forced || forced === "elevenlabs"
-      ? Boolean(process.env.ELEVENLABS_API_KEY) && engine === "elevenlabs"
+      ? Boolean(process.env.ELEVENLABS_API_KEY) && voice.engine === "elevenlabs"
       : false;
 
   if (wantEleven) {
-    const r = await synthesizeElevenLabs(trimmed.slice(0, 4000), id);
+    const r = await synthesizeElevenLabs(trimmed.slice(0, 4000), voice.id);
     if (r) return r;
   }
 
   // Edge TTS is the free default — always try it unless Engine is forced to ElevenLabs.
   if (!forced || forced === "edge") {
+    // A non-Edge pick (e.g. a premium voice with no key) still gets spoken, by
+    // the best free voice rather than going silent.
     const edgeVoice =
-      (engine === "elevenlabs" || engine === "groq")
-        ? "en-US-AriaNeural"
-        : id;
+      voice.engine === "elevenlabs" ? EDGE_VOICES[0] : voice;
     const r = await synthesizeEdge(trimmed.slice(0, 4000), edgeVoice);
     if (r) return r;
   }
 
   // Legacy engines (kept for backwards compatibility / when keys are active).
-  const g = await synthesizeGroq(trimmed, engine === "groq" ? id : "tara");
+  const g = await synthesizeGroq(trimmed, "tara");
   if (g) return g;
   const k = await synthesizeLiveKit(trimmed);
   if (k) return k;

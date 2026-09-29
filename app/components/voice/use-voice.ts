@@ -111,6 +111,42 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
     resolveSpeaking();
   }, [resolveSpeaking]);
 
+  /**
+   * Picks the best voice the OS/browser offers for the fallback synthesizer.
+   * Chrome and Edge expose Microsoft's "Natural"/"Online" voices (Jenny, Aria,
+   * Guy, Andrew…), which sound far better than the legacy compact voices some
+   * systems default to — picking well here is the difference between a usable
+   * fallback and a distinctly robotic one.
+   */
+  const pickBrowserVoice = useCallback((): SpeechSynthesisVoice | null => {
+    if (!("speechSynthesis" in window)) return null;
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices.length) return null;
+
+    const score = (v: SpeechSynthesisVoice): number => {
+      const name = `${v.name} ${v.voiceURI}`.toLowerCase();
+      let s = 0;
+      // Prefer modern neural voices.
+      if (/natural/.test(name)) s += 60;
+      if (/online/.test(name)) s += 40;
+      if (/neural/.test(name)) s += 35;
+      if (/microsoft/.test(name)) s += 30;
+      if (/google/.test(name)) s += 25;
+      // English, and English-US if we have a choice.
+      if (v.lang?.toLowerCase().startsWith("en")) s += 20;
+      if (/en[-_]us/i.test(v.lang ?? "")) s += 10;
+      // Penalise the old robotic/compact voices.
+      if (/microsoft (?!.*natural)|compact|espeak|samantha/.test(name)) s -= 45;
+      if (v.default) s += 2;
+      return s;
+    };
+
+    return voices
+      .slice()
+      .sort((a, b) => score(b) - score(a))
+      .find((v) => v.lang?.toLowerCase().startsWith("en")) ?? null;
+  }, []);
+
   const speakBrowser = useCallback(
     (text: string): Promise<void> => {
       if (!("speechSynthesis" in window)) return Promise.resolve();
@@ -118,6 +154,11 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
       return new Promise<void>((resolve) => {
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.rate = 1.02;
+        const browserVoice = pickBrowserVoice();
+        if (browserVoice) {
+          utterance.voice = browserVoice;
+          utterance.lang = browserVoice.lang;
+        }
         speakingResolveRef.current = resolve;
         utterance.onend = () => resolveSpeaking();
         utterance.onerror = () => resolveSpeaking();
@@ -125,7 +166,7 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
         window.speechSynthesis.speak(utterance);
       });
     },
-    [resolveSpeaking],
+    [resolveSpeaking, pickBrowserVoice],
   );
 
   const speak = useCallback(
