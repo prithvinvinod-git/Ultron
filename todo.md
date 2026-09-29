@@ -1502,6 +1502,8 @@ _Appended 2026-09-30. Commits `f01e2ab`, `b0f3509` (both pushed, deployed to htt
 ## Deferred (not done now — on purpose)
 
 - [ ] Wrap the remaining store-backed routes (`/api/system`, `/api/chat`, `/api/providers`, …) with `storeErrorResponse()` — they still return a bare 500 when the store is quota-blocked
+- [ ] **`/api/chat` fails hard when the store is down (worst of the above).** `getStore()` runs at the top of the handler outside any `try`, and the session/message writes are awaited *before* the model is called — so a quota-blocked store kills the entire chat request instead of merely losing persistence. Make those writes best-effort (catch, log, continue) and push `getStore()` behind the same guard, so Ultron still answers and streams when storage is unavailable.
+- [ ] After the Firestore quota resets, re-verify `/api/memory`, `/api/sessions` and chat persistence end-to-end — they intentionally 503 until then, so the real fix is unconfirmed in production.
 - [ ] `messageCount` is now hard-coded to `0` in the Firestore session list (nothing in the UI read it). If a count badge is ever wanted, denormalize a counter onto the session doc instead of aggregating per row
 - [ ] Firestore free-tier quota: upgrade the project to Blaze (or add a budget alert) to remove the daily read cap — the app will hit this again with normal use
 - [ ] Optional resilience: fall back to libSQL/Turso storage when Firestore is quota-blocked, rather than failing the request
