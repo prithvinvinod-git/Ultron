@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   ctx: RouteContext<"/api/sessions/[id]">,
 ) {
   const { id } = await ctx.params;
@@ -16,7 +16,11 @@ export async function GET(
     const session = await store.getSession(id);
     if (!session) return jsonError(404, "Session not found.");
 
-    const rows = await store.listMessages(id);
+    // Every returned message is a billed read, and a transcript is append-only,
+    // so default to the tail of the conversation rather than the whole history.
+    const requested = Number(new URL(request.url).searchParams.get("limit"));
+    const limit = Math.min(Math.max(requested || 100, 1), 200);
+    const rows = await store.listMessages(id, limit);
 
     const transcript = rows
       .map((m) => {

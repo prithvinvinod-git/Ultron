@@ -16,6 +16,7 @@ import {
 import { SuggestionCards } from "@/app/components/chat/suggestion-cards";
 import { useVoice } from "@/app/components/voice/use-voice";
 import { useLiveSession } from "@/app/components/voice/use-live-session";
+import { readSettings, useSettings } from "@/lib/settings";
 import { LiveMode } from "@/app/components/voice/live-mode";
 import type { ActivityKind, ChatEvent } from "@/ai/types";
 
@@ -66,9 +67,6 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   const [live, setLive] = useState(false);
   const [draft, setDraft] = useState("");
   const [speakingId, setSpeakingId] = useState<string | null>(null);
-  const [voices, setVoices] = useState<
-    { key: string; name: string; accent: string; engine: string; gender: string; note?: string }[]
-  >([]);
 
   const historyRef = useRef<{ role: "user" | "assistant"; content: string }[]>([]);
   const activeIdRef = useRef<string | null>(null);
@@ -82,31 +80,25 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const stickRef = useRef(true);
 
-  const { listening, speaking, speak, begin, end, stopSpeaking, cleanupStreams, voiceKey, setVoiceKey } =
+  // Live view of Settings, so the toggles apply without a reload.
+  const settings = useSettings();
+
+  const { listening, speaking, speak, begin, end, stopSpeaking, cleanupStreams } =
     useVoice({
       // Live draft while the mic is open…
       onTranscript: (text) => setDraft(text),
-      // …and the send gesture: closing the recording hands the text to the agent.
+      // …and the send gesture. Settings > "Confirm spoken turns" keeps the
+      // text in the composer for review instead of firing it off immediately.
       onFinalize: (text) => {
+        if (settings.confirmVoice) {
+          setDraft(text);
+          return;
+        }
         setDraft("");
         void submitRef.current(text);
       },
       onError: (message) => setError(message),
     });
-
-  // Load the available TTS voices once so the composer can offer a voice picker.
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/voice/voices")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: { voices?: typeof voices } | null) => {
-        if (!cancelled && data?.voices) setVoices(data.voices);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -337,6 +329,9 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
       abortRef.current = controller;
 
       try {
+        // Provider/model come from Settings, so a choice made there applies to
+        // every later turn without the composer carrying any state.
+        const { provider, model } = readSettings();
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -344,6 +339,8 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
           body: JSON.stringify({
             sessionId: sid,
             messages: [...sendHistory, { role: "user", content: text }],
+            ...(provider ? { provider } : {}),
+            ...(model ? { model } : {}),
           }),
         });
 
@@ -418,6 +415,8 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
     stopSpeaking,
     onInterrupt: interruptActive,
     onError: (message) => setError(message),
+    bargeIn: settings.bargeIn,
+    speakReplies: settings.speakReplies,
   });
 
   useEffect(() => {
@@ -550,9 +549,6 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
             onBeginVoice={() => void begin()}
             onEndVoice={end}
             onToggleLive={startLive}
-            voices={voices}
-            voiceKey={voiceKey}
-            onVoiceChange={setVoiceKey}
           />
         </div>
       )}

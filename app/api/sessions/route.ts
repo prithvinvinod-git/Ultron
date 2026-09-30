@@ -8,7 +8,9 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const store = await getStore();
-    const sessions = await store.listSessionsWithCounts(50);
+    // Each returned document is a billed read, so the list is deliberately
+    // short — the sidebar only ever shows a "recent" handful.
+    const sessions = await store.listSessionsWithCounts(20);
     return Response.json({ ok: true, sessions });
   } catch (err) {
     return storeErrorResponse(err);

@@ -2,6 +2,8 @@
 
 import { useCallback, useRef, useState } from "react";
 
+import { readSettings, writeSettings } from "@/lib/settings";
+
 export interface UseVoiceOptions {
   /** Live draft text, streamed while the user speaks. */
   onTranscript: (text: string) => void;
@@ -56,10 +58,9 @@ function getNativeRecognition(): (new () => NativeRecognition) | undefined {
 export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions) {
   const [listening, setListening] = useState(false);
   const [speaking, setSpeaking] = useState(false);
-  const [voiceKey, setVoiceKeyState] = useState<string>(() => {
-    if (typeof window === "undefined") return "aria";
-    return localStorage.getItem("ultron.tts.voice") || "aria";
-  });
+  // The voice is owned by Settings (`lib/settings`); this hook just mirrors it
+  // so the running session picks the new one up on its next utterance.
+  const [voiceKey, setVoiceKeyState] = useState<string>(() => readSettings().voiceKey);
   const mediaRef = useRef<MediaRecorder | null>(null);
   const uploadStreamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -80,11 +81,7 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
   const setVoiceKey = useCallback((key: string) => {
     setVoiceKeyState(key);
     voiceKeyRef.current = key;
-    try {
-      localStorage.setItem("ultron.tts.voice", key);
-    } catch {
-      // ignore storage errors (private mode etc.)
-    }
+    writeSettings({ voiceKey: key });
   }, []);
 
   const resolveSpeaking = useCallback(() => {

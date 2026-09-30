@@ -88,6 +88,9 @@ export function MessageBubble({
                 <ThinkingState
                   nodes={timeline}
                   autoPlay={false}
+                  // The nodes are real trace events, so don't animate through
+                  // them — but time the turn for real instead of spinning.
+                  live={message.streaming}
                   defaultExpanded={message.streaming}
                   workingLabel="Working..."
                 />

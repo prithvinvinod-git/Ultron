@@ -49,6 +49,83 @@ const DOCS_BY_NAME: Record<string, string> = {
   openrouter: "https://openrouter.ai/docs",
 };
 
+/** Model choices offered in Settings, per provider. */
+const MODEL_CHOICES: Record<
+  string,
+  Array<{ id: string; label: string; description: string }>
+> = {
+  gemini: [
+    {
+      id: "gemini-3.6-flash",
+      label: "Gemini 3.6 Flash",
+      description: "Fast and inexpensive. The everyday choice.",
+    },
+    {
+      id: "gemini-3.6-pro",
+      label: "Gemini 3.6 Pro",
+      description: "Slower, stronger reasoning for hard questions.",
+    },
+  ],
+  xai: [
+    {
+      id: "grok-4.6",
+      label: "Grok 4.6",
+      description: "xAI's current flagship.",
+    },
+  ],
+  openrouter: [
+    {
+      id: "nvidia/nemotron-3-super-120b-a12b:free",
+      label: "Nemotron 3 Super",
+      description: "Free tier, routed through OpenRouter.",
+    },
+  ],
+};
+
+export interface CatalogModel {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface CatalogProvider {
+  name: string;
+  label: string;
+  configured: boolean;
+  defaultModel: string;
+  docs?: string;
+  models: CatalogModel[];
+}
+
+/**
+ * Provider + model catalogue derived purely from environment variables.
+ *
+ * Deliberately store-free: the Settings tab must render even when the database
+ * is unreachable or quota-blocked, and it should never cost a read to do so.
+ */
+export function getProviderCatalog(): CatalogProvider[] {
+  const builders = registry();
+  return FALLBACK_PRIORITY.map((key) => {
+    const choices = [...(MODEL_CHOICES[key] ?? [])];
+    const configured = MODEL_BY_NAME[key] ?? "";
+    if (configured && !choices.some((m) => m.id === configured)) {
+      choices.unshift({
+        id: configured,
+        label: configured,
+        description: "Configured default.",
+      });
+    }
+    return {
+      name: key,
+      label: LABEL_BY_NAME[key] ?? key,
+      configured: Boolean(builders[key]),
+      defaultModel: configured,
+      docs: DOCS_BY_NAME[key],
+      models: choices,
+    };
+  });
+}
+
 /**
  * Active + configured providers in DB priority order (used by the agent).
  *

@@ -12,9 +12,6 @@ export function Composer({
   onBeginVoice,
   onEndVoice,
   onToggleLive,
-  voices,
-  voiceKey,
-  onVoiceChange,
 }: {
   value: string;
   onValueChange: (value: string) => void;
@@ -25,9 +22,6 @@ export function Composer({
   onBeginVoice: () => void;
   onEndVoice: () => void;
   onToggleLive?: () => void;
-  voices?: { key: string; name: string; accent: string; engine: string; gender: string; note?: string }[];
-  voiceKey?: string;
-  onVoiceChange?: (key: string) => void;
 }) {
   return (
     <div className="w-full max-w-2xl">
@@ -44,9 +38,6 @@ export function Composer({
         onBeginVoice={onBeginVoice}
         onEndVoice={onEndVoice}
         onToggleLive={onToggleLive}
-        voices={voices}
-        voiceKey={voiceKey}
-        onVoiceChange={onVoiceChange}
         placeholder="Message Ultron…"
       />
     </div>

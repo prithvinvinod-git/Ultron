@@ -319,6 +319,16 @@ export async function synthesizeSpeech(
 }
 
 /**
+ * Conditioning text for Whisper. It biases recognition toward the vocabulary
+ * this assistant actually deals in (product name, provider names, the stack),
+ * which is where a general-purpose model mishears most.
+ */
+const ASR_PROMPT =
+  "Ultron is a voice assistant. Terms: Ultron, Grok, Gemini, OpenRouter, " +
+  "Firestore, libSQL, Turso, Vercel, Next.js, TypeScript, Edge TTS, Whisper, " +
+  "ElevenLabs, GitHub, Docker, API, SSE, SSE stream, JSON.";
+
+/**
  * Transcribes a WebM/Opus audio blob with Groq Whisper (free tier).
  * Returns null when GROQ_API_KEY is not set — the browser's Web Speech API
  * is used as the free client-side fallback instead.
@@ -335,6 +345,12 @@ export async function transcribeSpeech(audio: Buffer, mimeType = "audio/webm") {
   );
   form.append("model", "whisper-large-v3");
   form.append("language", "en");
+  // Greedy decoding: the live path re-runs the same audio repeatedly, and
+  // sampling only invents different spellings of the same words.
+  form.append("temperature", "0");
+  // Whisper conditions on this text, so seeding it with the product/tech
+  // vocabulary is what stops "Ultron" and friends coming back mangled.
+  form.append("prompt", ASR_PROMPT);
 
   const res = await fetch(`${GROQ_BASE}/audio/transcriptions`, {
     method: "POST",

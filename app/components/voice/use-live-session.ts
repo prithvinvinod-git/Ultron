@@ -19,6 +19,17 @@ export interface UseLiveSessionOptions {
   /** Abandons whatever the agent is currently doing (used for barge-in). */
   onInterrupt?: () => void;
   onError?: (message: string) => void;
+  /**
+   * Settings > Behaviour > "Allow barge-in". When false the microphone keeps
+   * listening but never interrupts a reply in flight; a stop phrase still
+   * works, because that is a deliberate cancellation rather than a cut-in.
+   */
+  bargeIn?: boolean;
+  /**
+   * Settings > Behaviour > "Speak replies". When false the reply is still
+   * shown and returned, it is just never read aloud.
+   */
+  speakReplies?: boolean;
 }
 
 type NativeRecognition = {
@@ -68,6 +79,8 @@ export function useLiveSession({
   stopSpeaking,
   onInterrupt,
   onError,
+  bargeIn = true,
+  speakReplies = true,
 }: UseLiveSessionOptions) {
   const [status, setStatus] = useState<LiveStatus>("idle");
   const [subtitle, setSubtitle] = useState("");
@@ -85,6 +98,16 @@ export function useLiveSession({
   const speakStartedAtRef = useRef(0);
   const spokenTextRef = useRef("");
   const recognitionRef = useRef<NativeRecognition | null>(null);
+  /**
+   * Web Speech re-fires `onresult` with a `resultIndex` that can point at
+   * results already consumed (it only marks the first *changed* one), so
+   * rebuilding the sentence from `resultIndex` re-appends earlier words — that
+   * is what made one short sentence show up four times. Final results are
+   * therefore committed exactly once, tracked by index.
+   */
+  const lastFinalIndexRef = useRef(-1);
+  /** Finals heard since the last dispatch; what the subtitle/barge-in shows. */
+  const heardFinalsRef = useRef("");
   const longWaitIndexRef = useRef(0);
   /** One spoken status word per command — the "no looping" guarantee. */
   const statusSpokenRef = useRef(false);
@@ -118,6 +141,10 @@ export function useLiveSession({
   const stopSpeakingRef = useRef(stopSpeaking);
   const onInterruptRef = useRef(onInterrupt);
   const onErrorRef = useRef(onError);
+  // Mirrors of the Settings toggles, so the stable speech/interrupt callbacks
+  // below see the current preference without being rebuilt on every change.
+  const bargeInRef = useRef(bargeIn);
+  const speakRepliesRef = useRef(speakReplies);
 
   useEffect(() => {
     onTurnRef.current = onTurn;
@@ -126,6 +153,14 @@ export function useLiveSession({
     onInterruptRef.current = onInterrupt;
     onErrorRef.current = onError;
   });
+
+  useEffect(() => {
+    bargeInRef.current = bargeIn;
+  }, [bargeIn]);
+
+  useEffect(() => {
+    speakRepliesRef.current = speakReplies;
+  }, [speakReplies]);
 
   const setStatusSafe = useCallback((next: LiveStatus) => {
     statusRef.current = next;
@@ -148,6 +183,12 @@ export function useLiveSession({
         if (!item) break;
         // Superseded while waiting its turn.
         if (item.seq < dropBeforeRef.current) continue;
+        // "Speak replies" is off: the text still shows on screen and the
+        // captions still work, we just never open the audio pipeline.
+        if (!speakRepliesRef.current) {
+          setStatusSafe("listening");
+          continue;
+        }
         const played = speakRef.current(item.text).catch(() => {});
         currentSpeechRef.current = played;
         try {
@@ -162,7 +203,7 @@ export function useLiveSession({
       drainResolversRef.current = [];
       for (const resolve of resolvers) resolve();
     }
-  }, []);
+  }, [setStatusSafe]);
 
   const enqueueSpeech = useCallback(
     (text: string) => {
@@ -307,6 +348,11 @@ export function useLiveSession({
       const words = text.split(/\s+/).filter(Boolean).length;
       if (words < 2) return;
 
+      // Settings > Behaviour > "Allow barge-in" is off. A stop phrase still
+      // works (handled above) because that is a deliberate cancellation; this
+      // only suppresses cutting in on an unrelated remark.
+      if (!bargeInRef.current) return;
+
       // Ignore the tail of our own voice coming back through the mic.
       if (statusRef.current === "speaking") {
         if (Date.now() - speakStartedAtRef.current < 700) return;
@@ -332,6 +378,7 @@ export function useLiveSession({
     const buffer = turnBufferRef.current.trim();
     if (!buffer) return;
     turnBufferRef.current = "";
+    heardFinalsRef.current = "";
     await handleTurn(buffer);
   }, [handleTurn]);
 
@@ -354,6 +401,9 @@ export function useLiveSession({
       return;
     }
     const recognition = new SR();
+    // A new recognition session indexes its results from 0 again.
+    lastFinalIndexRef.current = -1;
+    heardFinalsRef.current = "";
     recognition.lang = "en-US";
     recognition.continuous = true;
     recognition.interimResults = true;
@@ -364,15 +414,30 @@ export function useLiveSession({
         resultIndex: number;
         results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }>;
       };
-      let finals = "";
+      let freshFinals = "";
       let interim = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const result = e.results[i];
-        const text = result[0].transcript;
-        if (result.isFinal) finals += (finals ? " " : "") + text;
-        else interim += text;
+        const text = (result[0]?.transcript ?? "").trim();
+        if (!text) continue;
+        if (result.isFinal) {
+          // Already committed in an earlier event — never speak it twice.
+          if (i <= lastFinalIndexRef.current) continue;
+          lastFinalIndexRef.current = i;
+          freshFinals += (freshFinals ? " " : "") + text;
+        } else {
+          // Interim text is only ever displayed, so re-reading it is harmless.
+          interim += text;
+        }
       }
-      const heard = `${finals} ${interim}`.replace(/\s+/g, " ").trim();
+      if (freshFinals) {
+        heardFinalsRef.current = heardFinalsRef.current
+          ? `${heardFinalsRef.current} ${freshFinals}`
+          : freshFinals;
+      }
+      const heard = `${heardFinalsRef.current} ${interim}`
+        .replace(/\s+/g, " ")
+        .trim();
       const state = statusRef.current;
 
       // While working or talking, the mic is only there for barge-in.
@@ -384,10 +449,10 @@ export function useLiveSession({
         return;
       }
 
-      if (finals.trim()) {
+      if (freshFinals) {
         turnBufferRef.current = turnBufferRef.current.trim()
-          ? `${turnBufferRef.current.trim()} ${finals.trim()}`
-          : finals.trim();
+          ? `${turnBufferRef.current.trim()} ${freshFinals}`
+          : freshFinals;
         scheduleDispatch();
       }
       setSubtitle(interim.trim() || turnBufferRef.current.trim());

@@ -12,8 +12,6 @@ import {
   Mic,
   BrainCog,
   AudioLines,
-  ChevronDown,
-  Check,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -439,174 +437,6 @@ const CustomDivider: React.FC = () => (
 );
 
 // Main PromptInputBox Component — extended with Ultron's existing voice controls.
-export interface VoiceOption {
-  key: string;
-  name: string;
-  accent: string;
-  engine: string;
-  gender: string;
-  note?: string;
-}
-
-/**
- * Custom voice picker. A native <select> can't show accent, gender or the
- * voice's character, and can't be themed; this replaces it with a themed
- * listbox that does, with full keyboard support.
- */
-function VoicePicker({
-  voices,
-  voiceKey,
-  onChange,
-}: {
-  voices: VoiceOption[];
-  voiceKey?: string;
-  onChange?: (key: string) => void;
-}) {
-  const [open, setOpen] = React.useState(false);
-  // null = follow the selected voice; otherwise the keyboard/hover cursor.
-  const [cursor, setCursor] = React.useState<number | null>(null);
-  const rootRef = React.useRef<HTMLDivElement>(null);
-  const listRef = React.useRef<HTMLDivElement>(null);
-
-  const selectedIndex = Math.max(
-    0,
-    voices.findIndex((v) => v.key === voiceKey),
-  );
-  const selected = voices[selectedIndex];
-  const index = cursor ?? selectedIndex;
-
-  React.useEffect(() => {
-    if (!open) return;
-    const onPointer = (e: MouseEvent | TouchEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onPointer);
-    document.addEventListener("touchstart", onPointer);
-    return () => {
-      document.removeEventListener("mousedown", onPointer);
-      document.removeEventListener("touchstart", onPointer);
-    };
-  }, [open]);
-
-  React.useEffect(() => {
-    if (!open) return;
-    const el = listRef.current?.querySelector<HTMLElement>(
-      `[data-voice-index="${index}"]`,
-    );
-    el?.scrollIntoView({ block: "nearest" });
-  }, [index, open]);
-
-  const commit = (i: number) => {
-    const v = voices[i];
-    if (!v) return;
-    onChange?.(v.key);
-    setOpen(false);
-    setCursor(null);
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (!open) {
-      if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        setCursor(null);
-        setOpen(true);
-      }
-      return;
-    }
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setCursor((i) => ((i ?? index) + 1) % voices.length);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setCursor((i) => ((i ?? index) - 1 + voices.length) % voices.length);
-    } else if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      commit(index);
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      setOpen(false);
-      setCursor(null);
-    }
-  };
-
-  return (
-    <div ref={rootRef} className="relative">
-      <button
-        type="button"
-        onClick={() => {
-          setCursor(null);
-          setOpen((o) => !o);
-        }}
-        onKeyDown={onKeyDown}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label="Select voice"
-        title={selected?.note ?? "Select voice"}
-        className={cn(
-          "flex cursor-pointer items-center gap-1 rounded-full border py-1 pl-2 pr-1.5 transition-colors",
-          open
-            ? "border-[#8B5CF6]/60 bg-[#1F2023]"
-            : "border-[#2A2C31] bg-[#1F2023]/70 hover:border-[#3A3D44]",
-        )}
-      >
-        <AudioLines className="h-3 w-3 shrink-0 text-brand-bright" />
-        <span className="max-w-[76px] truncate text-[11px] font-medium text-[#D1D5DB]">
-          {selected ? `${selected.name} · ${selected.accent}` : "Voice"}
-        </span>
-        <ChevronDown
-          className={cn(
-            "h-3 w-3 shrink-0 text-[#8b8d95] transition-transform",
-            open && "rotate-180",
-          )}
-        />
-      </button>
-
-      {open && (
-        <div
-          ref={listRef}
-          role="listbox"
-          aria-label="Voices"
-          className="absolute bottom-full right-0 z-50 mb-2 max-h-64 w-56 overflow-y-auto rounded-2xl border border-[#3a3b40] bg-[#242529] py-1 shadow-[0_-8px_30px_rgba(0,0,0,0.35)]"
-        >
-          {voices.map((v, i) => (
-            <button
-              key={v.key}
-              type="button"
-              role="option"
-              aria-selected={v.key === voiceKey}
-              data-voice-index={i}
-              onMouseEnter={() => setCursor(i)}
-              onClick={() => commit(i)}
-              className={cn(
-                "flex w-full items-start gap-2 px-3 py-2 text-left transition-colors",
-                i === index ? "bg-[#8B5CF6]/15" : "hover:bg-white/5",
-              )}
-            >
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="flex items-baseline gap-1.5">
-                  <span className="truncate text-sm text-[#c9cbd1]">{v.name}</span>
-                  <span className="shrink-0 text-[10px] text-[#8b8d95]">
-                    {v.accent} · {v.gender}
-                  </span>
-                </span>
-                {v.note && (
-                  <span className="line-clamp-1 text-[11px] text-[#8b8d95]">
-                    {v.note}
-                  </span>
-                )}
-              </span>
-              {v.key === voiceKey && (
-                <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-bright" />
-              )}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Main PromptInputBox Component — extended with Ultron's existing voice controls.
 interface PromptInputBoxProps {
   onSend?: (message: string, files?: File[]) => void;
   isLoading?: boolean;
@@ -621,9 +451,6 @@ interface PromptInputBoxProps {
   onBeginVoice?: () => void;
   onEndVoice?: () => void;
   onToggleLive?: () => void;
-  voices?: VoiceOption[];
-  voiceKey?: string;
-  onVoiceChange?: (key: string) => void;
 }
 export const PromptInputBox = React.forwardRef<
   HTMLDivElement,
@@ -642,9 +469,6 @@ export const PromptInputBox = React.forwardRef<
     onBeginVoice,
     onEndVoice,
     onToggleLive,
-    voices,
-    voiceKey,
-    onVoiceChange,
   } = props;
   const [input, setInput] = React.useState(externalValue || "");
 
@@ -1040,18 +864,9 @@ export const PromptInputBox = React.forwardRef<
             </div>
           </div>
 
-          {/* Right controls: voice picker + mic pinned beside the live/send action */}
+          {/* Right controls: the mic sits beside the live/send action. Voice is
+              chosen in Settings, so the composer stays uncluttered. */}
           <div className="flex items-center gap-1">
-            {voices && voices.length > 0 && (
-              <div className="hidden sm:flex">
-                <VoicePicker
-                  voices={voices}
-                  voiceKey={voiceKey}
-                  onChange={onVoiceChange}
-                />
-              </div>
-            )}
-
             {voiceEnabled && (
               <VoiceInput
                 listening={listening}

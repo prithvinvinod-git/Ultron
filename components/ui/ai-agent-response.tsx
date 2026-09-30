@@ -916,6 +916,13 @@ export interface ThinkingStateProps extends React.HTMLAttributes<HTMLDivElement>
   nodes?: TraceNode[];
   tools?: Record<string, ToolDefinition>;
   autoPlay?: boolean;
+  /**
+   * Runs the real elapsed clock and the "Working…" state without animating the
+   * timeline. Use this when the nodes are genuine trace events — they must not
+   * be auto-advanced — but the elapsed time should still be measured for real
+   * instead of being an indeterminate spinner.
+   */
+  live?: boolean;
   defaultExpanded?: boolean;
   workingLabel?: string;
   onSettled?: () => void;
@@ -927,6 +934,7 @@ export const ThinkingState = React.forwardRef<HTMLDivElement, ThinkingStateProps
       nodes = [],
       tools = DEFAULT_TOOL_REGISTRY,
       autoPlay = true,
+      live = false,
       defaultExpanded,
       workingLabel = "Working...",
       onSettled,
@@ -943,25 +951,31 @@ export const ThinkingState = React.forwardRef<HTMLDivElement, ThinkingStateProps
       defaultExpanded !== undefined ? defaultExpanded : null
     );
 
+    // `autoPlay` animates the timeline; `live` only runs the real clock. Both
+    // count as "working" for the label and the timer.
+    const working = live || (autoPlay && isWorking);
+
     const startTimeRef = React.useRef<number>(0);
     const [elapsedSeconds, setElapsedSeconds] = React.useState<number>(0);
-    const isWorkingRef = React.useRef(isWorking);
+    const workingRef = React.useRef(working);
     const onSettledRef = React.useRef(onSettled);
 
     React.useEffect(() => {
-      isWorkingRef.current = isWorking;
-    }, [isWorking]);
+      workingRef.current = working;
+    }, [working]);
 
     React.useEffect(() => {
       onSettledRef.current = onSettled;
     }, [onSettled]);
 
     React.useEffect(() => {
-      if (!autoPlay) return;
-      startTimeRef.current = Date.now();
+      if (!autoPlay && !live) return;
+      // Only stamp the start on the first run, so re-renders with new nodes
+      // don't restart the clock and under-report the real duration.
+      if (startTimeRef.current === 0) startTimeRef.current = Date.now();
 
       const timer = setInterval(() => {
-        if (!isWorkingRef.current) {
+        if (!workingRef.current) {
           clearInterval(timer);
           return;
         }
@@ -970,7 +984,7 @@ export const ThinkingState = React.forwardRef<HTMLDivElement, ThinkingStateProps
       }, 250);
 
       return () => clearInterval(timer);
-    }, [autoPlay]);
+    }, [autoPlay, live]);
 
     const advanceStep = React.useCallback(() => {
       setActiveIndex((prev) => {
@@ -986,7 +1000,6 @@ export const ThinkingState = React.forwardRef<HTMLDivElement, ThinkingStateProps
 
     React.useEffect(() => {
       if (!autoPlay || !isWorking || activeIndex >= totalNodes) return;
-
       const currentNode = nodes[activeIndex];
       if (currentNode?.type === "reasoning") return;
 
@@ -1010,7 +1023,7 @@ export const ThinkingState = React.forwardRef<HTMLDivElement, ThinkingStateProps
       }
     }, [isWorking, autoPlay]);
 
-    const isGlobalExpanded = manualExpanded !== null ? manualExpanded : isWorking;
+    const isGlobalExpanded = manualExpanded !== null ? manualExpanded : working;
 
     return (
       <div
@@ -1038,17 +1051,17 @@ export const ThinkingState = React.forwardRef<HTMLDivElement, ThinkingStateProps
         <button
           type="button"
           aria-expanded={isGlobalExpanded}
-          onClick={() => setManualExpanded((prev) => !(prev !== null ? prev : isWorking))}
+          onClick={() => setManualExpanded((prev) => !(prev !== null ? prev : working))}
           className={cn(
             "group flex w-fit items-center gap-1.5 p-0 bg-transparent text-left transition-colors duration-150 cursor-pointer",
             "text-muted-foreground/75 hover:text-foreground font-normal text-[13.5px] leading-relaxed",
             "focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none rounded-xs"
           )}
         >
-          {isWorking && <PixelDotsLoader />}
+          {working && <PixelDotsLoader />}
 
           <span className="text-[13.5px] font-normal transition-colors">
-            {isWorking ? (
+            {working ? (
               <span
                 className="bg-clip-text text-transparent font-medium"
                 style={{

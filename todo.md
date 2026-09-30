@@ -1477,7 +1477,8 @@ Steps to integrate
 
 # Ultron agent — work log
 
-_Appended 2026-09-30. Commits `f01e2ab`, `b0f3509` (both pushed, deployed to https://ultron-ai-ten.vercel.app)._
+_Appended 2026-09-30. Commits `f01e2ab`, `b0f3509`, `354f1ef`, `7e8959d`, `a7f152b` (all pushed, deployed to https://ultron-ai-ten.vercel.app)._
+_There is also an **uncommitted working tree** described under "In progress" below — `tsc` and `eslint` are clean, but it has never been through `next build` or reached production._
 
 ## Done (deployed + verified in production)
 
@@ -1489,20 +1490,37 @@ _Appended 2026-09-30. Commits `f01e2ab`, `b0f3509` (both pushed, deployed to htt
 - [x] Delete probe scripts (`probe-*.cjs`) and temp secret artifacts
 - [x] `tsc --noEmit`, `eslint`, and `next build` all clean; production chat returns a real answer
 - [x] Diagnosed the `/memory` 500: Firestore returned `RESOURCE_EXHAUSTED: Quota exceeded.` (free-tier read quota). `lib/store-error.ts` + `storeErrorResponse()` now turn that into a 503 with a readable message instead of an opaque 500, and `/memory` shows it in-page instead of silently rendering empty.
+- [x] Removed the streaming metadata canvas (`ThinkingOrb`) from the message bubble's meta row.
+- [x] **Chat survives a dead store** (`a7f152b`): `tryStore()` in `db/store.ts`, best-effort memory recall/save, provider-status fallback to the env-configured chain, and best-effort session/message writes. Verified by streaming a real Gemini reply while Firestore was still quota-exhausted.
+
+## In progress (uncommitted, not built, not deployed)
+
+- [x] **STT no longer duplicates every phrase ~4x.** Chrome re-fires `onresult` with a `resultIndex` that was already consumed, so the same final transcript was appended over and over. `use-live-session.ts` now tracks `lastFinalIndexRef` / `heardFinalsRef` and commits each final index exactly once. *Code done; still needs a browser check with a real mic.*
+- [x] **STT accuracy.** Server ASR (`groq whisper-large-v3`) now sends `temperature=0` plus a domain `ASR_PROMPT` (Ultron/Gemini/Firestore/SSE/… vocabulary). The native browser path is unchanged. *Wants a real microphone pass before it's called done.*
+- [x] **Fewer API calls.** The chat page no longer fetches `/api/voice/voices` on mount (the picker moved to Settings). Session list is served from a 60s `sessionStorage` cache (`lib/client-cache.ts`) seeded via a lazy `useState` initializer, with a 5-minute quota backoff and a 503 notice; list limit 50 → 20; `GET /api/sessions/[id]` takes a `limit` (default 100, max 200); new `GET /api/providers` is store-free and edge-cached.
+- [x] **Settings tab exists.** New `app/settings/page.tsx` with Model / Voice / Behaviour sections. `lib/settings.ts` owns the persisted prefs (`useSettings()` on `useSyncExternalStore`, memoized snapshot so hydration stays clean); `useVoice` now reads/writes the voice through it instead of its own localStorage key.
+- [x] **Model switch component installed** (spec at the top of this file): `components/ui/ai-model-select.tsx`, driven by the real catalogue — `getProviderCatalog()` in `ai/providers/index.ts` is env-only and touches no database. Chosen `provider`/`model` are sent with the chat POST and already reach `ai/providers/index.ts:80`.
+- [x] **Composer slimmed down.** `VoicePicker` moved to `components/ui/voice-picker.tsx`; the `voices` / `voiceKey` / `onVoiceChange` props are gone from `ai-prompt-box.tsx`, `composer.tsx` and `chat-window.tsx` (-189 lines from the prompt box).
+- [x] **React Compiler lint rules satisfied.** Seeded the sidebar cache in a `useState` initializer instead of an effect (no `set-state-in-effect`, no ref read during render); added `lib/use-is-client.ts` and derived `isOpen = open && !disabled` in the model selector rather than syncing state in effects.
+- [ ] **Wire the three Settings toggles — they currently persist but nothing reads them.** `speakReplies` must gate the auto-speak in the live session queue (`use-live-session.ts:161`), `confirmVoice` must make `onFinalize` fill the composer instead of submitting (`chat-window.tsx:88`), and `bargeIn` must reach `useLiveSession` (`chat-window.tsx:404`). *This is the top remaining item — until it lands the Settings page is misleading.*
+- [ ] **Verify `listMessages` ordering.** The `?limit` addition assumes the store returns the *newest* N. If it orders ascending and limits, it silently returns the oldest 100.
+- [ ] `next build`, commit, push, deploy, then re-verify the whole batch in production.
 
 ## Pending
 
 - [ ] **Next:** Give the AI a personality, humor, and emotionality (persona in both text replies and spoken voice)
 - [ ] Reduce voice latency: there is still a delay before speech starts even after the reply has arrived (TTS is buffered — no audio streaming / no speak-while-generating)
+- [ ] TTS is too choppy — too many pauses between sentences. The `pump()` loop in `use-live-session.ts` speaks one line at a time and awaits each; prefetch the next sentence's audio while the current one plays.
+- [ ] Barge-in is unreliable: cutting Ultron off mid-reply either doesn't register or cancels the wrong turn. `handleBargeIn` (`use-live-session.ts:299`) requires ≥2 words and ignores anything heard in the first 700ms of playback, plus an `looksLikeEcho` match — all three need tuning.
 - [ ] Fix live streaming of returns (reply text/audio should stream out as it is produced, not only once complete)
-- [ ] Tool calls: show real elapsed time while working (e.g. "worked 12s"), with a live timer per step/turn rather than an indeterminate spinner
+- [ ] Tool calls: show real elapsed time while working (e.g. "worked 12s"), with a live timer per step/turn rather than an indeterminate spinner. `ThinkingState` already has the timer — `message-bubble.tsx` just passes `autoPlay={false}`.
 - [ ] Browser-audition voice quality + slash menu, barge-in, and push-to-talk auto-send
 - [x] Fix the API-call overload that burned the quota: the sidebar polled `GET /api/sessions` every 4s and every call ran one `count()` aggregation per session (N+1). Removed the interval (refresh now only on focus / tab re-show / session create+delete) and dropped the per-session counts.
 
 ## Deferred (not done now — on purpose)
 
-- [ ] Wrap the remaining store-backed routes (`/api/system`, `/api/chat`, `/api/providers`, …) with `storeErrorResponse()` — they still return a bare 500 when the store is quota-blocked
-- [ ] **`/api/chat` fails hard when the store is down (worst of the above).** `getStore()` runs at the top of the handler outside any `try`, and the session/message writes are awaited *before* the model is called — so a quota-blocked store kills the entire chat request instead of merely losing persistence. Make those writes best-effort (catch, log, continue) and push `getStore()` behind the same guard, so Ultron still answers and streams when storage is unavailable.
+- [ ] Wrap the remaining store-backed routes (`/api/system`, …) with `storeErrorResponse()` — they still return a bare 500 when the store is quota-blocked. (`/api/providers` is exempt: it reads nothing from the store.)
+- [x] ~~`/api/chat` fails hard when the store is down~~ — fixed in `a7f152b`; every store touch is behind `tryStore()` and chat streams regardless.
 - [ ] After the Firestore quota resets, re-verify `/api/memory`, `/api/sessions` and chat persistence end-to-end — they intentionally 503 until then, so the real fix is unconfirmed in production.
 - [ ] `messageCount` is now hard-coded to `0` in the Firestore session list (nothing in the UI read it). If a count badge is ever wanted, denormalize a counter onto the session doc instead of aggregating per row
 - [ ] Firestore free-tier quota: upgrade the project to Blaze (or add a budget alert) to remove the daily read cap — the app will hit this again with normal use
@@ -1512,4 +1530,7 @@ _Appended 2026-09-30. Commits `f01e2ab`, `b0f3509` (both pushed, deployed to htt
 
 - Free Edge TTS rejects `mstts:express-as` and `<break>`; expressive delivery is unavailable for free.
 - ElevenLabs (10k chars/mo free) is the only zero-cost step up and activates automatically once `ELEVENLABS_API_KEY` is set.
+- `lib/settings.ts` is the single owner of the voice key, so the Settings tab and the running voice session can't drift. It deliberately has no server side: preferences are per-browser and cost no Firestore reads.
+- `getProviderCatalog()` is env-only on purpose. If the provider table ever needs to be edited at runtime, that's a separate store-backed feature — don't quietly re-add a DB read to this one, or opening Settings starts costing quota again.
+- `tailwind-merge` was added as a dependency for the model selector.
 

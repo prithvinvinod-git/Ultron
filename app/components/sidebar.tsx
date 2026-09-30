@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   Database,
@@ -10,11 +10,13 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
+  Settings,
   Sparkles,
   Trash2,
   Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { clearCache, readCache, writeCache } from "@/lib/client-cache";
 
 interface SessionRow {
   id: string;
@@ -23,11 +25,17 @@ interface SessionRow {
   messageCount: number;
 }
 
+/** How long a fetched session list is reused before it is refetched. */
+const SESSION_CACHE_TTL_MS = 60_000;
+/** After a quota 503, stop asking for this long instead of hammering. */
+const QUOTA_BACKOFF_MS = 5 * 60_000;
+
 const NAV = [
   { href: "/", icon: MessageSquare, label: "Chat" },
   { href: "/memory", icon: Database, label: "Memory" },
   { href: "/tools", icon: Wrench, label: "Tools" },
   { href: "/system", icon: Activity, label: "System" },
+  { href: "/settings", icon: Settings, label: "Settings" },
 ];
 
 interface SidebarProps {
@@ -45,42 +53,84 @@ export function Sidebar({
 }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
 
-  const loadSessions = () => {
+  // Seeded once, synchronously, from the cache — a reload normally shows the
+  // recent list with zero reads at all.
+  const [cachedSeed] = useState<SessionRow[] | null>(() =>
+    typeof window === "undefined"
+      ? null
+      : readCache<SessionRow[]>("sessions", SESSION_CACHE_TTL_MS),
+  );
+  const [sessions, setSessions] = useState<SessionRow[]>(cachedSeed ?? []);
+  /** Set while the store is quota-blocked, so we can explain and back off. */
+  const [quotaBlocked, setQuotaBlocked] = useState(false);
+  const backoffUntilRef = useRef(0);
+
+  /**
+   * The session list is a billed Firestore read, so it is served from a short
+   * sessionStorage cache and only refetched when that expires, when the window
+   * regains focus, or when a session is created or deleted (`force`). While the
+   * backend is quota-blocked we stop asking entirely.
+   */
+  const loadSessions = useCallback((force = false) => {
+    if (Date.now() < backoffUntilRef.current) return;
+
+    if (!force) {
+      const cached = readCache<SessionRow[]>("sessions", SESSION_CACHE_TTL_MS);
+      if (cached) return; // still fresh — nothing to read
+    }
+
     fetch("/api/sessions")
-      .then((res) => res.json())
-      .then((data) => setSessions(data.sessions ?? []))
+      .then(async (res) => {
+        if (res.status === 503) {
+          // Storage quota exhausted: wait it out instead of retrying.
+          backoffUntilRef.current = Date.now() + QUOTA_BACKOFF_MS;
+          setQuotaBlocked(true);
+          return null;
+        }
+        setQuotaBlocked(false);
+        return res.ok ? ((await res.json()) as { sessions?: SessionRow[] }) : null;
+      })
+      .then((data) => {
+        if (!data) return;
+        const list = data.sessions ?? [];
+        setSessions(list);
+        writeCache("sessions", list);
+      })
       .catch(() => {});
-  };
-
-  useEffect(() => {
-    loadSessions();
   }, []);
 
-  // Refresh on focus, on tab re-show, and when a session is created/deleted
-  // instead of polling on a timer. Each list call costs real Firestore reads,
-  // and the old 4s interval is what exhausted the free-tier quota.
   useEffect(() => {
-    const refresh = () => loadSessions();
+    // The cache was seeded above; only read the store when it was missing.
+    if (cachedSeed?.length) return;
+    loadSessions(true);
+  }, [cachedSeed, loadSessions]);
+
+  // Refresh when the tab comes back or is re-shown (cache may have gone stale),
+  // and force a read when a session is created or deleted. No timer: a poll
+  // loop is what drained the quota before.
+  useEffect(() => {
+    const onFocus = () => loadSessions();
     const onVisibility = () => {
       if (document.visibilityState === "visible") loadSessions();
     };
-    window.addEventListener("focus", refresh);
-    window.addEventListener("ultron:sessions", refresh);
+    const onChanged = () => loadSessions(true);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("ultron:sessions", onChanged);
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
-      window.removeEventListener("focus", refresh);
-      window.removeEventListener("ultron:sessions", refresh);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("ultron:sessions", onChanged);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, []);
+  }, [loadSessions]);
 
   const remove = async (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     e.stopPropagation();
     await fetch(`/api/sessions?id=${id}`, { method: "DELETE" });
-    loadSessions();
+    clearCache("sessions");
+    loadSessions(true);
   };
 
   const nav = (href: string) => {
@@ -185,7 +235,9 @@ export function Sidebar({
 
             {sessions.length === 0 ? (
               <div className="px-4 py-2 text-xs text-mist">
-                No conversations yet.
+                {quotaBlocked
+                  ? "Session list unavailable — storage quota reached."
+                  : "No conversations yet."}
               </div>
             ) : (
               <div className="px-2">
@@ -211,6 +263,11 @@ export function Sidebar({
                     </button>
                   </div>
                 ))}
+                {quotaBlocked && (
+                  <div className="px-4 pt-2 text-[11px] text-mist">
+                    Storage quota reached — this list may be out of date.
+                  </div>
+                )}
               </div>
             )}
           </div>

@@ -220,14 +220,18 @@ export function createStore(): DataStore {
     },
 
     async listMessages(sessionId: string, limit = 200): Promise<MessageRow[]> {
+      // Read newest-first so `limit` keeps the *recent* turns — ordering
+      // ascending and then limiting would return the oldest N and silently drop
+      // the current conversation. Reversed below to keep the ascending
+      // contract every caller expects.
       const snap = await db()
         .collection("sessions")
         .doc(sessionId)
         .collection("messages")
-        .orderBy("createdAt", "asc")
+        .orderBy("createdAt", "desc")
         .limit(limit)
         .get();
-      return snap.docs.map((doc) => toMessageRow(doc.id, doc.data()));
+      return snap.docs.map((doc) => toMessageRow(doc.id, doc.data())).reverse();
     },
 
     async countMessages(sessionId: string): Promise<number> {
