@@ -1494,11 +1494,17 @@ Verified in production. **The Firestore quota reset**, so persistence is live ag
 - [x] **React Compiler lint satisfied.** Caches are seeded in lazy `useState` initializers and state is derived (`isOpen = open && !disabled`, `working = live || (autoPlay && isWorking)`) instead of being synced in effects.
 - [x] `tsc --noEmit`, `eslint`, and `next build` clean; probe session deleted after verification.
 
+## Deployed 2026-09-30 — `aded3a0`, `6fe6c89`
+
+- [x] **Collapsed the voice listbox** (`components/ui/voice-picker.tsx`): `max-h-72` → `max-h-56`, single-line compact rows, matches the trigger width, thin styled scrollbar so a clipped list reads as scrollable rather than truncated. Also stopped the arrow-key cursor going `NaN` when the voice list is still empty.
+- [x] **Rewrote the persona** (`ai/agent.ts` `buildSystemPrompt`). The old prompt was a list of adjectives ("witty, precise, JARVIS-style"); the new one is concrete and testable: at most one light touch of humour and never at the user's expense, no filler agreement, steady when the user is stressed, correct-and-move-on when wrong, answer-first with no restating the question.
+- [x] **Voice mode is a real signal now.** The old prompt said *"when the user is in a voice/live conversation, keep answers short"* — but nothing ever told the model it was in a voice conversation, so the rule could never fire and TTS read `**bold**`, `12%` and raw URLs aloud. `chat-window` now flags dictated turns (`voice: true`), the route forwards it, and the agent swaps in voice rules: one to three sentences, no markdown, numbers and URLs written for the ear ("twelve percent", "example dot com"). Verified in production — the same question returns spoken prose in voice mode and bold markdown in text mode.
+- [x] **Removed the client-controlled `system` field** on `POST /api/chat`. It replaced the entire system prompt, so any caller could POST their own prompt and keep tool access. No client sent it.
+
 ## Pending
 
-- [ ] **Next:** Give the AI a personality, humor, and emotionality (persona in both text replies and spoken voice)
-- [ ] Reduce voice latency: there is still a delay before speech starts even after the reply has arrived (TTS is buffered — no audio streaming / no speak-while-generating)
-- [ ] TTS is too choppy — too many pauses between sentences. The `pump()` loop in `use-live-session.ts` speaks one line at a time and awaits each; prefetch the next sentence's audio while the current one plays.
+- [ ] Reduce voice latency: there is still a delay before speech starts even after the reply has arrived (TTS is buffered — no audio streaming / no speak-while-generating). Note the reply is already sent as a **single** `/api/voice/tts` request per turn, so this is server-side synthesis time, not per-sentence client splitting.
+- [ ] TTS is too choppy — too many pauses between sentences. **Re-diagnosed:** it is *not* per-sentence fetching (one request per turn) and the route sends `Cache-Control: no-store`, so identical text is re-synthesised every turn. Candidate causes are Edge free-tier SSML/pause handling and a missing audio cache. Still needs someone to actually listen before changing anything.
 - [ ] Barge-in is unreliable: cutting Ultron off mid-reply either doesn't register or cancels the wrong turn. `handleBargeIn` requires ≥2 words and ignores anything heard in the first 700ms of playback, plus an `looksLikeEcho` match — all three need tuning. (Now gated by the Settings toggle, but the thresholds themselves are unchanged.)
 - [ ] Fix live streaming of returns (reply text/audio should stream out as it is produced, not only once complete)
 - [ ] Browser-audition voice quality, the Settings tab, slash menu, barge-in, and push-to-talk
