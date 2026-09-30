@@ -72,7 +72,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   const activeIdRef = useRef<string | null>(null);
   const activeTextRef = useRef("");
   const abortRef = useRef<AbortController | null>(null);
-  /** Mirrors `streaming` synchronously so a barge-in can start a new turn at once. */
+  /** Mirrors `streaming` synchronously so an interrupt can start a new turn at once. */
   const streamingRef = useRef(false);
   const submitRef = useRef<(text: string) => Promise<string>>(async () => "");
   const announceRef = useRef<((activity: ActivityKind) => void) | null>(null);
@@ -190,6 +190,11 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
         );
         break;
       case "text":
+        // Accumulate into the ref as well as the transcript. `activeTextRef` was
+        // only ever written on the `done` frame, so an aborted or errored stream
+        // returned "" and threw away everything already streamed — which is why
+        // an interrupted turn showed no reply and spoke nothing.
+        activeTextRef.current += event.text;
         setTranscript((prev) =>
           prev.map((m) => (m.id === id ? { ...m, text: m.text + event.text } : m)),
         );
@@ -296,7 +301,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   const submit = useCallback(
     async (raw: string, opts?: { voice?: boolean }) => {
       const text = raw.trim();
-      // Guard on the ref, not the `streaming` state: barge-in aborts and
+      // Guard on the ref, not the `streaming` state: an interrupt aborts and
       // re-submits within the same tick, before React has re-rendered.
       if (!text || streamingRef.current) return "";
       setError(null);
@@ -394,7 +399,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
     submitRef.current = submit;
   }, [submit]);
 
-  /** Barge-in: drop whatever is in flight so a new command can take over now. */
+  /** Stop phrase: drop whatever is in flight so the turn ends immediately. */
   const interruptActive = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -418,7 +423,6 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
     stopSpeaking,
     onInterrupt: interruptActive,
     onError: (message) => setError(message),
-    bargeIn: settings.bargeIn,
     speakReplies: settings.speakReplies,
   });
 

@@ -5,7 +5,6 @@ import {
   activitySpokenWord,
   isStopPhrase,
   longWaitLine,
-  looksLikeEcho,
 } from "@/lib/activity";
 import type { ActivityKind } from "@/ai/types";
 
@@ -16,15 +15,9 @@ export interface UseLiveSessionOptions {
   onTurn: (text: string) => Promise<string | null>;
   speak: (text: string) => Promise<void>;
   stopSpeaking: () => void;
-  /** Abandons whatever the agent is currently doing (used for barge-in). */
+  /** Abandons whatever the agent is currently doing (stop phrase). */
   onInterrupt?: () => void;
   onError?: (message: string) => void;
-  /**
-   * Settings > Behaviour > "Allow barge-in". When false the microphone keeps
-   * listening but never interrupts a reply in flight; a stop phrase still
-   * works, because that is a deliberate cancellation rather than a cut-in.
-   */
-  bargeIn?: boolean;
   /**
    * Settings > Behaviour > "Speak replies". When false the reply is still
    * shown and returned, it is just never read aloud.
@@ -69,9 +62,9 @@ function blobToBase64(blob: Blob): Promise<string> {
  * listens, sends each spoken turn to the agent, speaks the reply, then returns
  * to listening. Only `stop()` ends the session.
  *
- * While Ultron is working or talking the microphone stays OPEN so the user can
- * barge in: saying "stop" (or anything else that isn't an echo of the
- * read-out) cuts in, abandons the current turn, and takes the new command.
+ * While Ultron is working the microphone stays open, but nothing it hears can
+ * end the turn — that used to be barge-in, and it aborted the reply mid-stream.
+ * A deliberate stop phrase while Ultron is speaking still cuts it off.
  */
 export function useLiveSession({
   onTurn,
@@ -79,7 +72,6 @@ export function useLiveSession({
   stopSpeaking,
   onInterrupt,
   onError,
-  bargeIn = true,
   speakReplies = true,
 }: UseLiveSessionOptions) {
   const [status, setStatus] = useState<LiveStatus>("idle");
@@ -95,8 +87,6 @@ export function useLiveSession({
   const dispatchTimerRef = useRef<number | null>(null);
   const restartTimerRef = useRef<number | null>(null);
   const longWaitTimerRef = useRef<number | null>(null);
-  const speakStartedAtRef = useRef(0);
-  const spokenTextRef = useRef("");
   const recognitionRef = useRef<NativeRecognition | null>(null);
   /**
    * Web Speech re-fires `onresult` with a `resultIndex` that can point at
@@ -106,8 +96,6 @@ export function useLiveSession({
    * therefore committed exactly once, tracked by index.
    */
   const lastFinalIndexRef = useRef(-1);
-  /** Finals heard since the last dispatch; what the subtitle/barge-in shows. */
-  const heardFinalsRef = useRef("");
   const longWaitIndexRef = useRef(0);
   /** One spoken status word per command — the "no looping" guarantee. */
   const statusSpokenRef = useRef(false);
@@ -141,9 +129,8 @@ export function useLiveSession({
   const stopSpeakingRef = useRef(stopSpeaking);
   const onInterruptRef = useRef(onInterrupt);
   const onErrorRef = useRef(onError);
-  // Mirrors of the Settings toggles, so the stable speech/interrupt callbacks
-  // below see the current preference without being rebuilt on every change.
-  const bargeInRef = useRef(bargeIn);
+  // Mirror of the "speak replies" toggle, so the stable speech/interrupt
+  // callbacks below see the current preference without being rebuilt.
   const speakRepliesRef = useRef(speakReplies);
 
   useEffect(() => {
@@ -153,10 +140,6 @@ export function useLiveSession({
     onInterruptRef.current = onInterrupt;
     onErrorRef.current = onError;
   });
-
-  useEffect(() => {
-    bargeInRef.current = bargeIn;
-  }, [bargeIn]);
 
   useEffect(() => {
     speakRepliesRef.current = speakReplies;
@@ -294,15 +277,9 @@ export function useLiveSession({
         if (!activeRef.current) return;
         if (reply && reply.trim()) {
           setStatusSafe("speaking");
-          speakStartedAtRef.current = Date.now();
-          spokenTextRef.current = reply;
           activityRef.current = null;
           setActivity(null);
-          try {
-            await speakReply(reply);
-          } finally {
-            spokenTextRef.current = "";
-          }
+          await speakReply(reply);
         }
         if (!activeRef.current) return;
         setStatusSafe("listening");
@@ -323,52 +300,42 @@ export function useLiveSession({
   );
 
   /**
-   * Called for anything heard while Ultron is speaking or thinking.
-   * "stop" cancels; anything else is treated as a new command that abandons
-   * the current turn — unless it is just the read-out echoing back.
+   * Interrupts the current turn, but ONLY for a deliberate stop phrase.
+   *
+   * Barge-in was removed here on purpose. It used to abandon a turn whenever
+   * two or more words were heard while Ultron was `thinking` — and the echo and
+   * 700ms guards below only ever ran while `speaking`. Because Web Speech
+   * accumulates finals across results, the assistant's own "Thinking" filler
+   * came back through the mic, reached two words, and aborted the in-flight
+   * `/api/chat` stream. Since the client only captured assistant text on the
+   * `done` frame, that abort threw the whole reply away: no text, no speech,
+   * and the queued filler was dropped by `cancelQueuedSpeech()`.
+   *
+   * So while thinking we now ignore the microphone entirely — it is open, but
+   * nothing it hears can end the turn. An explicit "stop" while speaking still
+   * works, because that is the user's own hand, not an echo.
    */
-  const handleBargeIn = useCallback(
+  const handleInterruption = useCallback(
     (heard: string) => {
       const text = heard.trim();
       if (!text) return;
+      // Only a deliberate cancellation counts, and only while there is
+      // something audible to cut off.
+      if (statusRef.current !== "speaking") return;
+      if (!isStopPhrase(text)) return;
 
-      if (isStopPhrase(text)) {
-        stopLongWait();
-        cancelQueuedSpeech();
-        stopSpeakingRef.current();
-        onInterruptRef.current?.();
-        turnBufferRef.current = "";
-        spokenTextRef.current = "";
-        activityRef.current = null;
-        setActivity(null);
-        if (activeRef.current) setStatusSafe("listening");
-        return;
-      }
-
-      const words = text.split(/\s+/).filter(Boolean).length;
-      if (words < 2) return;
-
-      // Settings > Behaviour > "Allow barge-in" is off. A stop phrase still
-      // works (handled above) because that is a deliberate cancellation; this
-      // only suppresses cutting in on an unrelated remark.
-      if (!bargeInRef.current) return;
-
-      // Ignore the tail of our own voice coming back through the mic.
-      if (statusRef.current === "speaking") {
-        if (Date.now() - speakStartedAtRef.current < 700) return;
-        if (looksLikeEcho(spokenTextRef.current, text)) return;
-      }
-
-      // A real new command: abandon whatever is in flight and take this one.
       stopLongWait();
       cancelQueuedSpeech();
       stopSpeakingRef.current();
       onInterruptRef.current?.();
       turnBufferRef.current = "";
-      void handleTurn(text);
+      activityRef.current = null;
+      setActivity(null);
+      setStatusSafe("listening");
     },
-    [stopLongWait, cancelQueuedSpeech, handleTurn, setStatusSafe],
+    [stopLongWait, cancelQueuedSpeech, setStatusSafe],
   );
+
 
   const dispatchBuffer = useCallback(async () => {
     if (dispatchTimerRef.current !== null) {
@@ -378,7 +345,6 @@ export function useLiveSession({
     const buffer = turnBufferRef.current.trim();
     if (!buffer) return;
     turnBufferRef.current = "";
-    heardFinalsRef.current = "";
     await handleTurn(buffer);
   }, [handleTurn]);
 
@@ -403,7 +369,6 @@ export function useLiveSession({
     const recognition = new SR();
     // A new recognition session indexes its results from 0 again.
     lastFinalIndexRef.current = -1;
-    heardFinalsRef.current = "";
     recognition.lang = "en-US";
     recognition.continuous = true;
     recognition.interimResults = true;
@@ -430,25 +395,25 @@ export function useLiveSession({
           interim += text;
         }
       }
-      if (freshFinals) {
-        heardFinalsRef.current = heardFinalsRef.current
-          ? `${heardFinalsRef.current} ${freshFinals}`
-          : freshFinals;
-      }
-      const heard = `${heardFinalsRef.current} ${interim}`
-        .replace(/\s+/g, " ")
-        .trim();
+
       const state = statusRef.current;
 
-      // While working or talking, the mic is only there for barge-in.
-      if (state === "speaking" || state === "thinking") {
-        if (heard) {
-          setSubtitle(heard);
-          handleBargeIn(heard);
-        }
+      // While Ultron is working, the mic is open but deliberately ignored:
+      // whatever it hears cannot end the turn (see handleInterruption), and
+      // nothing is accumulated, so the echo of our own voice cannot linger and
+      // contaminate the next turn. Showing it as a subtitle was worse than
+      // useless — it flickered with the read-out.
+      if (state === "thinking") return;
+
+      // While speaking, only an explicit stop phrase is honoured. Note this
+      // reads the *unaccumulated* interim text, so the assistant's own read-out
+      // can never masquerade as the user saying "stop".
+      if (state === "speaking") {
+        if (interim.trim()) handleInterruption(interim);
         return;
       }
 
+      // Idle or listening: this is real user speech, so it counts.
       if (freshFinals) {
         turnBufferRef.current = turnBufferRef.current.trim()
           ? `${turnBufferRef.current.trim()} ${freshFinals}`
@@ -501,21 +466,21 @@ export function useLiveSession({
       const data = (await res.json()) as { ok?: boolean; text?: string };
       const text = data.ok ? (data.text ?? "").trim() : "";
       if (!text) return;
-      if (statusRef.current === "speaking" || statusRef.current === "thinking") {
-        handleBargeIn(text);
-      } else {
-        turnBufferRef.current = turnBufferRef.current.trim()
-          ? `${turnBufferRef.current.trim()} ${text}`
-          : text;
-        scheduleDispatch();
+      if (statusRef.current !== "idle" && statusRef.current !== "listening") {
+        handleInterruption(text);
+        return;
       }
+      turnBufferRef.current = turnBufferRef.current.trim()
+        ? `${turnBufferRef.current.trim()} ${text}`
+        : text;
+      scheduleDispatch();
     } catch {
       onErrorRef.current?.("Voice transcription failed.");
     }
     if (activeRef.current && statusRef.current === "idle") {
       setStatusSafe("listening");
     }
-  }, [handleBargeIn, scheduleDispatch, setStatusSafe]);
+  }, [handleInterruption, scheduleDispatch, setStatusSafe]);
 
   const startRecorder = useCallback(() => {
     if (!streamRef.current) return;
@@ -639,7 +604,6 @@ export function useLiveSession({
     stopSpeakingRef.current();
     onInterruptRef.current?.();
     turnBufferRef.current = "";
-    spokenTextRef.current = "";
     activityRef.current = null;
     setActivity(null);
     setSubtitle("");

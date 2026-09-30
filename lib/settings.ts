@@ -25,8 +25,6 @@ export interface AppSettings {
   provider: string;
   /** Preferred model within that provider; "" uses the provider default. */
   model: string;
-  /** Let the user cut in while Ultron is speaking or working. */
-  bargeIn: boolean;
   /** Require an explicit send gesture before a spoken turn is submitted. */
   confirmVoice: boolean;
 }
@@ -36,7 +34,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   speakReplies: true,
   provider: "",
   model: "",
-  bargeIn: true,
   confirmVoice: false,
 };
 

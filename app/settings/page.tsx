@@ -155,12 +155,6 @@ export default function SettingsPage() {
             onChange={(v) => update({ speakReplies: v })}
           />
           <Toggle
-            label="Allow barge-in"
-            hint="Interrupt Ultron mid-sentence by speaking. The microphone hears itself, so leave this off if the assistant cuts itself off."
-            checked={settings.bargeIn}
-            onChange={(v) => update({ bargeIn: v })}
-          />
-          <Toggle
             label="Confirm spoken turns"
             hint="Put dictated text in the composer for review instead of sending it as soon as you release the mic."
             checked={settings.confirmVoice}
