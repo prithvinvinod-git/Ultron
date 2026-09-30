@@ -18,7 +18,8 @@ export async function POST(request: Request) {
     messages?: unknown[];
     provider?: string;
     model?: string;
-    system?: string;
+    /** The reply will be spoken aloud, so the agent answers in voice mode. */
+    voice?: boolean;
   };
   try {
     body = await request.json();
@@ -79,7 +80,7 @@ export async function POST(request: Request) {
           signal: signal.signal,
           providerName: body.provider,
           model: body.model,
-          system: body.system,
+          voice: body.voice,
         })) {
           controller.enqueue(sseEncode(event));
           if (event.type === "done") {

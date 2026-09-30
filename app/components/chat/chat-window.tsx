@@ -294,7 +294,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   }, []);
 
   const submit = useCallback(
-    async (raw: string) => {
+    async (raw: string, opts?: { voice?: boolean }) => {
       const text = raw.trim();
       // Guard on the ref, not the `streaming` state: barge-in aborts and
       // re-submits within the same tick, before React has re-rendered.
@@ -341,6 +341,8 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
             messages: [...sendHistory, { role: "user", content: text }],
             ...(provider ? { provider } : {}),
             ...(model ? { model } : {}),
+            // Spoken turns get the voice rules: short, no markdown, no symbols.
+            ...(opts?.voice ? { voice: true } : {}),
           }),
         });
 
@@ -403,7 +405,8 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
 
   const liveOnTurn = useCallback(
     async (text: string) => {
-      await submit(text);
+      // This turn was dictated, so its answer is going straight to TTS.
+      await submit(text, { voice: true });
       return activeTextRef.current || null;
     },
     [submit],
