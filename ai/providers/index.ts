@@ -67,11 +67,9 @@ const MODEL_CHOICES: Record<
     },
   ],
   xai: [
-    {
-      id: "grok-4.6",
-      label: "Grok 4.6",
-      description: "xAI's current flagship.",
-    },
+    // No hard-coded id here: `XAI_MODEL` is the source of truth, and
+    // `getProviderCatalog` adds it. Guessing an id only produced a duplicate
+    // next to the configured one.
   ],
   openrouter: [
     {
