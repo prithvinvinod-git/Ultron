@@ -1,5 +1,5 @@
 import { runAgent } from "@/ai/agent";
-import { getStore } from "@/db/store";
+import { tryStore } from "@/db/store";
 import { randomUUID } from "node:crypto";
 import { SSE_HEADERS, jsonError, sseEncode } from "@/lib/http";
 import type { ChatMessage } from "@/ai/types";
@@ -33,37 +33,32 @@ export async function POST(request: Request) {
     return jsonError(400, "No chat messages provided.");
   }
 
-  const store = await getStore();
+  // Persistence is best-effort. If the store is unavailable (Firestore quota
+  // exhausted, bad credentials) the turn must still answer and stream — it just
+  // goes unpersisted.
   const lastUser = [...history].reverse().find((m) => m.role === "user");
-  let sessionId = body.sessionId;
-  let isNewSession = false;
+  const sessionId = body.sessionId ?? randomUUID();
+  const title = truncate(lastUser?.content ?? "New conversation");
 
-  if (sessionId) {
-    const existing = await store.getSession(sessionId);
-    if (!existing) {
-      isNewSession = true;
-      await store.createSession({
-        id: sessionId,
-        title: truncate(lastUser?.content ?? "New conversation"),
+  // A stored id that no longer resolves (or a fresh one) still needs creating.
+  const isNewSession = await tryStore(
+    (store) => store.getSession(sessionId).then((s) => s === null),
+    true,
+  );
+
+  await tryStore(async (store) => {
+    if (isNewSession) {
+      await store.createSession({ id: sessionId, title });
+    }
+    if (lastUser?.content) {
+      await store.insertMessage({
+        id: randomUUID(),
+        sessionId,
+        role: "user",
+        content: lastUser.content,
       });
     }
-  } else {
-    isNewSession = true;
-    sessionId = randomUUID();
-    await store.createSession({
-      id: sessionId,
-      title: truncate(lastUser?.content ?? "New conversation"),
-    });
-  }
-
-  if (lastUser?.content) {
-    await store.insertMessage({
-      id: randomUUID(),
-      sessionId,
-      role: "user",
-      content: lastUser.content,
-    });
-  }
+  }, undefined);
 
   const signal = new AbortController();
   request.signal.addEventListener(
@@ -102,23 +97,23 @@ export async function POST(request: Request) {
         );
       } finally {
         if (finalContent !== null) {
-          await store.insertMessage({
-            id: randomUUID(),
-            sessionId,
-            role: "assistant",
-            content: finalContent ?? "",
-            provider: finalProvider || null,
-            model: finalModel || null,
-          });
-          if (isNewSession) {
-            await store.touchSession(sessionId, {
-              title: truncate(
-                finalContent || (lastUser?.content ?? "New conversation"),
-              ),
+          await tryStore(async (store) => {
+            await store.insertMessage({
+              id: randomUUID(),
+              sessionId,
+              role: "assistant",
+              content: finalContent ?? "",
+              provider: finalProvider || null,
+              model: finalModel || null,
             });
-          } else {
-            await store.touchSession(sessionId, {});
-          }
+            await store.touchSession(sessionId, {
+              title: isNewSession
+                ? truncate(
+                    finalContent || (lastUser?.content ?? "New conversation"),
+                  )
+                : undefined,
+            });
+          }, undefined);
         }
         controller.close();
       }

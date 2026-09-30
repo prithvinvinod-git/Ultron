@@ -1,5 +1,5 @@
 import "server-only";
-import { getStore } from "@/db/store";
+import { tryStore } from "@/db/store";
 import { getProviderStatus } from "@/ai/providers";
 import { memoryCount, recallMemories, saveMemory } from "@/ai/memory/store";
 import { formatResults, readPage, searchWeb } from "@/ai/tools/web-search";
@@ -155,15 +155,25 @@ const TOOLS: ToolDefinition[] = [
       parameters: { type: "object", properties: {} },
     },
     execute: async () => {
-      const [providers, store, memories] = await Promise.all([
+      const [providers, memories] = await Promise.all([
         getProviderStatus(),
-        getStore(),
         memoryCount(),
       ]);
-      const counts = await Promise.all([
-        store.countSessions(),
-        store.countMessagesAll(),
-      ]);
+      const dbMeta = await tryStore(
+        async (store) => {
+          const [sessions, messages] = await Promise.all([
+            store.countSessions(),
+            store.countMessagesAll(),
+          ]);
+          return {
+            engine: store.engine,
+            sessions,
+            messages,
+            memories,
+          };
+        },
+        { engine: "unavailable", sessions: 0, messages: 0, memories },
+      );
       return JSON.stringify(
         {
           host: {
@@ -176,12 +186,7 @@ const TOOLS: ToolDefinition[] = [
             uptimeSec: Math.round(os.uptime()),
           },
           runtime: { node: process.version, pid: process.pid },
-          db: {
-            engine: store.engine,
-            sessions: counts[0],
-            messages: counts[1],
-            memories,
-          },
+          db: dbMeta,
           providers: providers.map((p) => ({
             name: p.name,
             configured: p.configured,

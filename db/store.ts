@@ -35,3 +35,25 @@ export async function getStore(): Promise<DataStore> {
     throw new Error(`[${backend}] store init failed: ${reason}`);
   }
 }
+
+/**
+ * Runs a store call and swallows backend failures (quota exhausted, bad
+ * credentials, network), returning `fallback` instead of throwing.
+ *
+ * Persistence is not a prerequisite for answering: a chat turn should still
+ * complete and stream when the database is down, just without history. Use
+ * this anywhere a store failure must not take down the request; use plain
+ * `getStore()` where losing the write would be silently wrong.
+ */
+export async function tryStore<T>(
+  fn: (store: DataStore) => Promise<T>,
+  fallback: T,
+): Promise<T> {
+  try {
+    return await fn(await getStore());
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(`[store:${pickBackend()}] call failed: ${reason}`);
+    return fallback;
+  }
+}
