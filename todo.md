@@ -1479,6 +1479,30 @@ Steps to integrate
 
 _Appended 2026-09-30. Commits `f01e2ab`, `b0f3509`, `354f1ef`, `7e8959d`, `a7f152b`, `158bb25`, `b20f545` (all pushed, deployed to https://ultron-ai-ten.vercel.app)._
 
+_Later the same day: `f3670a8` and `b8430ac` are pushed to `main` but **not yet deployed** — production still runs `6fe6c89`._
+
+## Pushed 2026-09-30 — `b8430ac` + `7b96e89` (**not deployed yet**)
+
+**Reported problem:** live mode did not speak, did not show the returned text, and the single filler word after a voice submission never played. Two separate causes, found by comparing against `f01e2ab` and `536e31e`.
+
+- [x] **Root cause: barge-in was cancelling the turn it was meant to help with.** `handleBargeIn` abandoned a turn whenever ≥2 words were heard while Ultron was `thinking` — and the echo guard plus the 700 ms grace period only ever ran while `speaking`. Web Speech accumulates finals across results, so Ultron's own "Thinking" filler came back through the mic, reached two words, and called `interruptActive()` → `abort()` on the in-flight `/api/chat` stream. This is the same "the VAD never runs on Chrome" finding below, seen from the other side: with no energy gate, barge-in was reacting to `words` — including its own echo.
+- [x] **The abort then discarded the whole reply.** `activeTextRef` was written only on the `done` frame, never on `text`, so an interrupted turn returned `""`, `liveOnTurn` handed back `null`, nothing appeared in the captions, `speakReply` never ran, and `cancelQueuedSpeech()` dropped the queued filler on the way out.
+- [x] **Barge-in removed for now** (user decision). Nothing the mic hears can end the turn, and as of `7b96e89` the mic is closed for the whole turn anyway. An explicit stop phrase still works from an explicit stop button; it no longer works *by voice* while Ultron speaks, because the recogniser is shut — that is the accepted cost of never talking over itself. The `bargeIn` setting, its Settings toggle and its ref are removed rather than left dead.
+- [x] **`activeTextRef` accumulates on every `text` frame**, refined by `done`. An aborted or errored stream now keeps whatever already arrived.
+- [x] **`heardFinalsRef` no longer accumulates while thinking or speaking**, so the echo cannot linger and contaminate the next turn. `speakStartedAtRef`, `spokenTextRef` and the `looksLikeEcho` import existed only for the echo guard and were removed with it. `+61 / −92` across 4 files.
+- [x] **Verified against a real stream**, not by inspection: an abort after the first `text` frame returned `""` before and returns the partial text now; a complete stream and the single announced filler are unchanged. `/api/voice/tts` returns `audio/mpeg`. `tsc --noEmit`, `eslint`, `next build` clean, route table unchanged. *Still wants a browser check with a real mic before this is called done.*
+- [x] **`7b96e89` — the mic is now closed for the whole turn.** Chrome's Web Speech recogniser never opens a `getUserMedia` stream, so it has *no* echo cancellation: it heard Ultron's own read-out as ordinary speech. `pauseMic` / `resumeMic` bracket the turn, `recognition.onend` no longer restarts itself while paused (without that the pause lasted ~250 ms), `transcribeFallback` discards a segment recorded during a pause, and `resumeMic` sits in a `finally` — a mic left shut after a failed turn would kill the loop with nothing on screen to explain it.
+- [x] **The actual silence was `speakReplies`, not the TTS route.** `pump()` gates every queued item on `speakRepliesRef`, so a persisted `false` mutes the whole pipeline with no error anywhere. Confirmed by replaying the real gate: off ⇒ zero speech. `pump()` also no longer claims `listening` when muted, since it runs mid-turn and the mic really is shut at that point. *Settled by the user in the browser — it works.*
+- [ ] **`searching` / `reading` are still never spoken, and this is a separate bug.** A real stream emits only `[thinking, thinking, thinking, generating]`: `ai/agent.ts:148` hardcodes `round === 0 ? "thinking" : "generating"`, so the other four `ActivityKind`s exist in the type and in `SPOKEN_WORD` but nothing produces them. Even once emitted they would be skipped — `f01e2ab` ("Speak one status word per command") allows one word per turn, so the first "Thinking" uses up the slot. See next move.
+
+## Next move — live mode (2026-09-30)
+
+Live mode **speaks and is browser-verified**. Both fixes above are committed and pushed but still **not deployed**, and the remaining work is one design choice plus a deploy.
+
+1. **Decide the status-word budget (needs your call).** *One word per turn* (today's design, from `f01e2ab`) means you hear "Thinking" then the answer — clean, never sounds stalled, but "Searching" is unreachable by design. *One word per distinct activity* means "Thinking", then "Searching" when a real search starts, then the answer; still bounded at ~5 words since `maxToolCalls` is 4. **Recommendation: the second**, because "Searching the web" is genuinely useful feedback and the TTS call is already being paid for. Implementing it needs a real activity kind emitted from the tool loop — not just a label.
+2. **Deploy and confirm end-to-end.** Production still runs `6fe6c89`, so it predates all of this; push alone does not deploy. Check with a real query that triggers `search_web`, and confirm the mic re-opens after a *failed* turn (the `finally` path), which no test covers.
+3. **Watch for two known gaps once deployed.** `speakReplies=false` still fails silently — surfacing that state in the UI would turn a mystery into a visible toggle. And the stop phrase no longer works by voice while Ultron speaks, because the recogniser is paused by design; the stop button still does.
+
 ## Deployed 2026-09-30 — `158bb25` + `b20f545`
 
 Verified in production. **The Firestore quota reset**, so persistence is live again end-to-end: a chat turn wrote its session and both messages, and `GET /api/sessions` returns real rows (20, the new limit) instead of a 503.
@@ -1512,14 +1536,16 @@ This is the half-cascade pattern implemented by hand: the LLM streams text, we s
 ### Root causes
 
 1. **Dead air before speech.** `liveOnTurn` awaits `submit()` to completion, and only then calls `speakReply(reply)`, which sends the *entire* answer as a single `/api/voice/tts` request. So the wait is generation time **plus** synthesis time, with nothing audible in between. The speech queue (`pendingRef`/`pump`) already serialises playback correctly — nothing ever *feeds* it incrementally.
-2. **The mic is left open on purpose.** `use-live-session.ts:443` keeps recognition running through `thinking`/`speaking` so barge-in can work, and `startRecognition` never calls `getUserMedia`, so **no `echoCancellation` is ever active on Chrome** — the mic genuinely hears Ultron talking.
-3. **Barge-in therefore guesses.** It requires ≥2 transcribed words, ignores the first 700 ms, and fuzzy-matches the echo. It is reacting to *words*, which arrive far too late to feel responsive, instead of to the user *starting to speak*.
+2. **The mic was left open on purpose.** `use-live-session.ts:443` kept recognition running through `thinking`/`speaking` so barge-in could work, and `startRecognition` never calls `getUserMedia`, so **no `echoCancellation` is ever active on Chrome** — the mic genuinely hears Ultron talking. *Fixed in `7b96e89`: the mic is now closed for the whole turn instead. The missing AEC is no longer load-bearing, because nothing is recorded while Ultron speaks.*
+3. **Barge-in therefore guessed.** It required ≥2 transcribed words, ignored the first 700 ms, and fuzzy-matched the echo. It was reacting to *words*, which arrive far too late to feel responsive, instead of to the user *starting to speak*. *Removed in `b8430ac`.*
 
 ### Key finding that makes this cheap
 
 **The VAD never runs on Chrome.** `analyserRef` / `speechActiveRef` / `lastSpeechAtRef` are set up in `startFallback()` only, and `start()` calls `startFallback()` *only* when `getNativeRecognition()` is missing. Chrome has `SpeechRecognition`, so the analyser is never created and there is no energy signal at all. The detection machinery already exists — it is just never started on the browser we actually use.
 
 ### Plan
+
+> **Status 2026-09-30 (`b8430ac`, `7b96e89`):** items 1, 2 and 6 are deferred — barge-in is removed for now, by user decision. Item 4 is now *half* done: the mic is closed for the whole turn (`7b96e89`) and `pump()` no longer claims `listening` while muted, but the status still flips to `speaking` only after `done`, so the dead air before the first word remains. Only items 3–5 (sentence streaming, status machine, TTS cache) remain active work. See the live-mode entry above.
 
 1. **Always open an AEC mic, for detection only.** On `start()`, get a `getUserMedia` stream with `echoCancellation`/`noiseSuppression`/`autoGainControl` and run the existing RMS analyser, *in addition to* `SpeechRecognition`. The analyser is used for barge-in onset; `SpeechRecognition` still does the transcription. One flag decides which path owns the recorder.
 2. **Barge in on speech onset, not on words.** While `speaking`, the rising edge of the RMS signal is the cut-in trigger — roughly 120 ms of latency instead of waiting for a sentence. Keep a short (~250 ms) guard for the first syllable leaking through the speaker, and drop the ≥2-word and `looksLikeEcho` heuristics entirely.
@@ -1530,14 +1556,24 @@ This is the half-cascade pattern implemented by hand: the LLM streams text, we s
 
 ### Tasks
 
-- [ ] Always-on AEC detection stream + VAD, independent of which STT path is active
-- [ ] Rewrite `handleBargeIn` to trigger on VAD onset; delete the ≥2-word, 700 ms and `looksLikeEcho` heuristics
+Split by the barge-in removal (`b8430ac`). The latency half is still live; the interruption half is deferred until barge-in is actually wanted back.
+
+**Still to do — sentence streaming (the dead-air fix):**
+
 - [ ] Add `onDelta` to `submit()`; add a sentence splitter that holds the trailing fragment
 - [ ] Enqueue sentences as they stream; drop the whole-reply `speakReply` path for live turns
 - [ ] Status: `speaking` from first enqueue, `listening` only when the queue drains
-- [ ] `AbortController` on the TTS fetch so barge-in kills in-flight synthesis
 - [ ] Server-side LRU cache for `/api/voice/tts` (keyed on text + voice)
 - [ ] Keep the existing HTTP pipeline as the fallback path
+- [ ] Surface the `speakReplies` state in the UI — it currently mutes everything with no visible sign (`7b96e89`)
+- [ ] Emit a *real* activity kind from the tool loop; `ai/agent.ts:148` hardcodes `thinking`/`generating`, so `searching`/`reading`/`calculating`/`remembering` are never spoken
+- [ ] Decide the status-word budget: one word per turn (`f01e2ab`, today's behaviour) vs. one per distinct activity. Recommendation and full reasoning in the live-mode entry above.
+
+**Deferred with barge-in (user decision, 2026-09-30) — do not start:**
+
+- [ ] ~~Always-on AEC detection stream + VAD, independent of which STT path is active~~ — deferred. Was only ever for barge-in onset detection; the `getUserMedia` stream is not otherwise needed while the mic is ignored.
+- [ ] ~~Rewrite barge-in to trigger on VAD onset~~ — deferred. `handleBargeIn` is gone and its ≥2-word / 700 ms / `looksLikeEcho` heuristics were deleted with it, so the "trigger on words" flaw is no longer reachable. If barge-in returns, build it on VAD onset from the start.
+- [ ] ~~`AbortController` on the TTS fetch so barge-in kills in-flight synthesis~~ — deferred with barge-in. Worth revisiting anyway for the `stop()` path, which is still the only way to cut off playback.
 
 ### Notes on this route
 
@@ -1604,13 +1640,21 @@ Mood vocabulary should be small and fixed — e.g. `neutral`, `amused`, `warm`, 
 - [ ] Emit one `<emotion>` per sentence request; never mid-transcript
 - [ ] Buffer `<speed>`/`<volume>` values whole when streaming, per the docs
 - [ ] Pick "Emotive"-tagged voices only
-- [ ] Move to Cartesia's WebSocket speak endpoint once sentences are already per-sentence
+- [ ] Move to Cartesia's WebSocket speak endpoint once sentences are already per-sentence — **deferred (user decision 2026-09-30: keep WebSocket for later).** Until then the HTTP endpoint is fine, because per-sentence requests are small and short.
 - [ ] Keep Edge TTS as fallback; verify by ear before removing
+
+### Hosting — answered, not deferred (2026-09-30)
+
+Asked whether a cloud option exists for testing without a local always-on host. **Yes, and it needs no new host: Firestore realtime listeners.** The Firebase JS SDK's `onSnapshot` opens a WebSocket to Google's infrastructure, not to our server, so the client can subscribe to sessions, messages and tool traces live from the existing deployment. This is a good stand-in while the real WebSocket/event-bus layer waits.
+
+Caveats: it costs Firestore reads on every snapshot (Spark plan is roughly 50k reads/day, 20k writes/day), so it should be scoped to the surfaces that genuinely need push rather than replacing polling wholesale. A real EventBus plus WebSocket remains the proper answer long-term, and Cloud Functions are the natural host for that later — neither is needed now.
 
 ## Pending
 
-- [ ] **Superseded by the Gemini Live plan above** — voice latency ("speak as fast as the message arrives"), the listening-continues bug, barge-in tuning, and reply text/audio streaming are all consequences of the buffered STT+TTS pipeline. Fixing them individually means tuning a design we intend to replace. Keep as fallback-only work.
-- [ ] Browser-audition voice quality, the Settings tab, slash menu, barge-in, and push-to-talk
+- [ ] **Superseded by the Gemini Live plan above** — voice latency ("speak as fast as the message arrives"), the listening-continues bug, barge-in tuning, and reply text/audio streaming are all consequences of the buffered STT+TTS pipeline. Fixing them individually means tuning a design we intend to replace. Keep as fallback-only work. (Barge-in tuning is now moot anyway — barge-in is removed; see `b8430ac`.)
+- [ ] Browser-audition voice quality, the Settings tab, slash menu, and push-to-talk. Barge-in is off the list until it is deliberately brought back.
+- [ ] **Confirm the `b8430ac` + `7b96e89` live-mode fixes in a real browser with a real mic** — the audible loop (filler word → reply → back to listening) was confirmed working by the user on `7b96e89` *locally*, but production still runs `6fe6c89` and predates all of it. Highest-priority item in this list.
+- [ ] **ARC1 resume prep:** `ultron-arc1:test/settings.test.ts` uses `bargeIn` as its sample patch field in 8 places. `main` removed that field, so the branch must have those rewritten to `confirmVoice`/`speakReplies` before its tests compile. Step 1 WIP is parked in stash `arc1 Step 1 WIP: permissions + validation + audit log schema (uncompiled, resume later)`.
 - [ ] Wrap the remaining store-backed routes (`/api/system`, …) with `storeErrorResponse()` — they still return a bare 500 when the store is quota-blocked. (`/api/providers` is exempt: it reads nothing from the store.)
 - [x] Fix the API-call overload that burned the quota: the sidebar polled `GET /api/sessions` every 4s and every call ran one `count()` aggregation per session (N+1). Removed the interval and dropped the per-session counts.
 
