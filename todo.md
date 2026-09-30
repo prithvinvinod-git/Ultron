@@ -1501,18 +1501,122 @@ Verified in production. **The Firestore quota reset**, so persistence is live ag
 - [x] **Voice mode is a real signal now.** The old prompt said *"when the user is in a voice/live conversation, keep answers short"* — but nothing ever told the model it was in a voice conversation, so the rule could never fire and TTS read `**bold**`, `12%` and raw URLs aloud. `chat-window` now flags dictated turns (`voice: true`), the route forwards it, and the agent swaps in voice rules: one to three sentences, no markdown, numbers and URLs written for the ear ("twelve percent", "example dot com"). Verified in production — the same question returns spoken prose in voice mode and bold markdown in text mode.
 - [x] **Removed the client-controlled `system` field** on `POST /api/chat`. It replaced the entire system prompt, so any caller could POST their own prompt and keep tool access. No client sent it.
 
+## Recommended: Gemini-live-style interaction, keeping our own STT/TTS (2026-09-30)
+
+**Reported problem:** in live mode the microphone keeps listening after the reply has landed, and speech does not start until the whole message has arrived.
+
+**Rejected alternative:** handing TTS to the Gemini Live API. It would fix this, but it changes the stack (and costs a native-audio model whose tool use is weaker). We want the *interaction pattern* — instant speech, reliable interruption — not Gemini's audio. Keep Groq STT and Edge TTS; rebuild the loop around streaming.
+
+This is the half-cascade pattern implemented by hand: the LLM streams text, we speak each sentence the moment it is complete, and playback of sentence N overlaps generation of sentence N+1.
+
+### Root causes
+
+1. **Dead air before speech.** `liveOnTurn` awaits `submit()` to completion, and only then calls `speakReply(reply)`, which sends the *entire* answer as a single `/api/voice/tts` request. So the wait is generation time **plus** synthesis time, with nothing audible in between. The speech queue (`pendingRef`/`pump`) already serialises playback correctly — nothing ever *feeds* it incrementally.
+2. **The mic is left open on purpose.** `use-live-session.ts:443` keeps recognition running through `thinking`/`speaking` so barge-in can work, and `startRecognition` never calls `getUserMedia`, so **no `echoCancellation` is ever active on Chrome** — the mic genuinely hears Ultron talking.
+3. **Barge-in therefore guesses.** It requires ≥2 transcribed words, ignores the first 700 ms, and fuzzy-matches the echo. It is reacting to *words*, which arrive far too late to feel responsive, instead of to the user *starting to speak*.
+
+### Key finding that makes this cheap
+
+**The VAD never runs on Chrome.** `analyserRef` / `speechActiveRef` / `lastSpeechAtRef` are set up in `startFallback()` only, and `start()` calls `startFallback()` *only* when `getNativeRecognition()` is missing. Chrome has `SpeechRecognition`, so the analyser is never created and there is no energy signal at all. The detection machinery already exists — it is just never started on the browser we actually use.
+
+### Plan
+
+1. **Always open an AEC mic, for detection only.** On `start()`, get a `getUserMedia` stream with `echoCancellation`/`noiseSuppression`/`autoGainControl` and run the existing RMS analyser, *in addition to* `SpeechRecognition`. The analyser is used for barge-in onset; `SpeechRecognition` still does the transcription. One flag decides which path owns the recorder.
+2. **Barge in on speech onset, not on words.** While `speaking`, the rising edge of the RMS signal is the cut-in trigger — roughly 120 ms of latency instead of waiting for a sentence. Keep a short (~250 ms) guard for the first syllable leaking through the speaker, and drop the ≥2-word and `looksLikeEcho` heuristics entirely.
+3. **Speak sentences as they stream.** Give `submit()` an `onDelta` callback. Live mode feeds it into a splitter that holds back the incomplete trailing fragment and emits each finished sentence to `enqueueSpeech`. The first sentence is synthesised while the rest of the answer is still being generated.
+4. **Fix the status machine.** Flip to `speaking` when the first sentence is *enqueued* (not after `done`), and only return to `listening` once the queue has actually drained — that is the "listening continues" symptom.
+5. **Cache TTS audio.** The route sends `Cache-Control: no-store`, so identical text is re-synthesised on every repeat (reconnects, retries, "say that again"). A small in-memory LRU on the server removes both the pause and the cost. Worth doing because per-sentence requests multiply Edge calls.
+6. **Barge-in must be immediate.** On cut-in: abort the in-flight chat stream, stop audio, clear the pending queue *and* abort any in-flight TTS fetch, then dispatch the new command as soon as its transcript lands. Dropping queued audio but not in-flight fetches is why the old path sometimes "cancelled the wrong turn".
+
+### Tasks
+
+- [ ] Always-on AEC detection stream + VAD, independent of which STT path is active
+- [ ] Rewrite `handleBargeIn` to trigger on VAD onset; delete the ≥2-word, 700 ms and `looksLikeEcho` heuristics
+- [ ] Add `onDelta` to `submit()`; add a sentence splitter that holds the trailing fragment
+- [ ] Enqueue sentences as they stream; drop the whole-reply `speakReply` path for live turns
+- [ ] Status: `speaking` from first enqueue, `listening` only when the queue drains
+- [ ] `AbortController` on the TTS fetch so barge-in kills in-flight synthesis
+- [ ] Server-side LRU cache for `/api/voice/tts` (keyed on text + voice)
+- [ ] Keep the existing HTTP pipeline as the fallback path
+
+### Notes on this route
+
+- Still one TTS round trip per sentence, so the first-sentence latency is now *generation* of sentence 1, not the whole answer. Per-sentence prosody and pause control become feasible too, since each request is small.
+- `buildSystemPrompt({ voice: true })` already constrains replies to 1–3 plain sentences, which is what keeps the sentence count (and therefore the number of TTS calls) low.
+- If the per-sentence round trips still feel slow, the next lever is a streaming TTS API, not more prompt tuning.
+
+## TTS engine decision — Cartesia Sonic 3.5 (2026-09-30)
+
+**Decision:** replace `msedge-tts` with **Cartesia Sonic 3.5**, and let delivery **vary with the mood** of the answer. Keep Edge TTS as the fallback until this is verified good.
+
+**Why (benchmarks, July–Aug 2026):**
+
+| Engine | Time to first audio | Blind-listener score | Free tier | Notes |
+|---|---|---|---|---|
+| **Cartesia Sonic 3.5** | **188 ms P50 / 351 ms P90** | 1218 Elo (#1) | 20k credits/mo | WebSocket streaming, SSML controls |
+| Deepgram Flux | — | 73.4% win rate (#1) | $200 one-time | Best quality, but no SSML/prompting at all |
+| ElevenLabs v3 | 288 ms (Flash) | 1179 Elo | 10k chars/mo | Only true prompt-style control (audio tags) |
+| Kokoro-82M (local) | Real-time on CPU | 1060 Elo | Free forever | No cloning, no emotion control, needs a host |
+| Edge TTS (current) | Slow, fully buffered | — | Free | Rejects `mstts:express-as` and `<break>` |
+
+Latency is the deciding factor, not quality — Sonic 3.5 has both. Deepgram scored higher on blind preference but deliberately infers delivery with *no* control surface, which conflicts with the mood decision below.
+
+### Control options (this is the "prompt" surface)
+
+Cartesia uses SSML, not natural-language prompts. Supported: `speed`, `volume`, `emotion`, `break`, `spell`.
+
+```xml
+<speed ratio="1.1"/>            <!-- 0.6–1.5 -->
+<volume ratio="0.8"/>           <!-- 0.5–2.0 -->
+<emotion value="amused"/>       <!-- beta -->
+<break time="400ms"/>
+<spell>...</spell>              <!-- strict character-by-character -->
+[laughs]                        <!-- laughter -->
+```
+
+### Gotchas found in the docs — read before implementing
+
+- **Speed and volume are temporarily disabled on `sonic-3-latest`.** Sonic 3.5 explicitly has more natural pacing, but if we rely on `<speed>`/`<volume>` we must pin **`sonic-3`** until that is restored.
+- **Streaming tag-by-tag reads the tag aloud.** When streaming input, the *whole* value of a `<speed>`/`<volume>` tag must be buffered before sending, or it will be spoken as content ("passing in `1`, `.`, `0` as separate inputs will result in reading out the tags").
+- **`<emotion>` is beta and mid-generation shifts are unreliable.** Cartesia's own guidance: use **separate generation contexts per emotion** rather than changing emotion inside one transcript, and use voices tagged "Emotive" — it may not work with other voices.
+- **Punctuation is the primary pause tool.** A comma or full stop already gives a natural pause; reserve `<break>` for a specific, deliberate silence. Over-using `<break>` is likely a cause of the "too choppy" complaint, not a cure for it.
+- **Do not chain `<spell>` and `<break>`.** Let text normalisation handle phone numbers and similar sequences; reach for `<spell>` only for strict character reads.
+
+### Design consequence: mood must be decided per sentence
+
+The mood-varying requirement collides with the sentence-streaming plan in a way that actually simplifies both. Because emotion cannot shift reliably mid-transcript, the mood has to be **chosen before synthesis starts** — and synthesis now happens per sentence. So:
+
+- The LLM emits a lightweight mood tag per sentence alongside the text (a short `mood` field, not free-form prose).
+- Each sentence is synthesised in its own request, prefixed with exactly one `<emotion value="..."/>`.
+- This fits the existing half-cascade plan exactly: one small request per sentence, each independently controllable and independently cacheable.
+
+Mood vocabulary should be small and fixed — e.g. `neutral`, `amused`, `warm`, `sincere`, `calm` — mapped to Cartesia's supported values, defaulting to `neutral` when absent or unrecognised. Ultron's persona already has a stated humour budget, so `amused` should be the exception, not the default.
+
+### Open question — deliberately undecided
+
+**Where does the TTS run?** Left open on purpose. Cloud Cartesia needs nothing but an API key and works on Vercel today. If a small always-on host is ever acceptable, local Kokoro becomes viable later at zero cost (Apache 2.0, CPU-real-time) — but it has no emotion control, so it would be a downgrade for the mood goal. Decision deferred.
+
+### Tasks
+
+- [ ] Add `CARTESIA_API_KEY` handling and a provider abstraction behind `POST /api/voice/tts` (engine chosen by env, client untouched)
+- [ ] Sonic 3.5 via `sonic-3` pin if `<speed>`/`<volume>` are used; else `sonic-3-latest`
+- [ ] Add the `mood` field to the streamed reply and define the fixed vocabulary + default
+- [ ] Emit one `<emotion>` per sentence request; never mid-transcript
+- [ ] Buffer `<speed>`/`<volume>` values whole when streaming, per the docs
+- [ ] Pick "Emotive"-tagged voices only
+- [ ] Move to Cartesia's WebSocket speak endpoint once sentences are already per-sentence
+- [ ] Keep Edge TTS as fallback; verify by ear before removing
+
 ## Pending
 
-- [ ] Reduce voice latency: there is still a delay before speech starts even after the reply has arrived (TTS is buffered — no audio streaming / no speak-while-generating). Note the reply is already sent as a **single** `/api/voice/tts` request per turn, so this is server-side synthesis time, not per-sentence client splitting.
-- [ ] TTS is too choppy — too many pauses between sentences. **Re-diagnosed:** it is *not* per-sentence fetching (one request per turn) and the route sends `Cache-Control: no-store`, so identical text is re-synthesised every turn. Candidate causes are Edge free-tier SSML/pause handling and a missing audio cache. Still needs someone to actually listen before changing anything.
-- [ ] Barge-in is unreliable: cutting Ultron off mid-reply either doesn't register or cancels the wrong turn. `handleBargeIn` requires ≥2 words and ignores anything heard in the first 700ms of playback, plus an `looksLikeEcho` match — all three need tuning. (Now gated by the Settings toggle, but the thresholds themselves are unchanged.)
-- [ ] Fix live streaming of returns (reply text/audio should stream out as it is produced, not only once complete)
+- [ ] **Superseded by the Gemini Live plan above** — voice latency ("speak as fast as the message arrives"), the listening-continues bug, barge-in tuning, and reply text/audio streaming are all consequences of the buffered STT+TTS pipeline. Fixing them individually means tuning a design we intend to replace. Keep as fallback-only work.
 - [ ] Browser-audition voice quality, the Settings tab, slash menu, barge-in, and push-to-talk
+- [ ] Wrap the remaining store-backed routes (`/api/system`, …) with `storeErrorResponse()` — they still return a bare 500 when the store is quota-blocked. (`/api/providers` is exempt: it reads nothing from the store.)
 - [x] Fix the API-call overload that burned the quota: the sidebar polled `GET /api/sessions` every 4s and every call ran one `count()` aggregation per session (N+1). Removed the interval and dropped the per-session counts.
 
 ## Deferred (not done now — on purpose)
 
-- [ ] Wrap the remaining store-backed routes (`/api/system`, …) with `storeErrorResponse()` — they still return a bare 500 when the store is quota-blocked. (`/api/providers` is exempt: it reads nothing from the store.)
+- [ ] ~~Wrap the remaining store-backed routes (`/api/system`, …) with `storeErrorResponse()` — they still return a bare 500 when the store is quota-blocked.~~ — see Pending. (`/api/providers` is exempt: it reads nothing from the store.)
 - [x] ~~`/api/chat` fails hard when the store is down~~ — fixed in `a7f152b`; every store touch is behind `tryStore()` and chat streams regardless.
 - [x] ~~After the Firestore quota resets, re-verify `/api/memory`, `/api/sessions` and chat persistence end-to-end~~ — **done 2026-09-30.** The quota reset, `/api/memory` and `/api/sessions` return 200, and a probe chat turn persisted its session and both messages (then deleted).
 - [ ] `messageCount` is now hard-coded to `0` in the Firestore session list (nothing in the UI read it). If a count badge is ever wanted, denormalize a counter onto the session doc instead of aggregating per row
