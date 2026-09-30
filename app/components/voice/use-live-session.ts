@@ -81,6 +81,22 @@ export function useLiveSession({
 
   const activeRef = useRef(false);
   const stoppingRef = useRef(false);
+  /**
+   * The mic is shut for the whole turn, while Ultron works and while it talks.
+   * Web Speech gets no echo cancellation (on Chrome we never open a
+   * `getUserMedia` stream at all), so leaving it live meant it faithfully
+   * transcribed Ultron's own read-out — which is exactly what barge-in used to
+   * misfire on. Pausing the mic outright is simpler and completely total.
+   */
+  const micPausedRef = useRef(false);
+  /** Same trick for the fallback recorder, used when resuming a paused mic. */
+  const startRecorderRef = useRef<(() => void) | null>(null);
+  /**
+   * Same trick for `startRecognition`. It is a hoisted function declaration, so
+   * calling it from `resumeMic` would work at runtime, but the hooks lint rules
+   * reject reading it before its declaration point — hence the indirection.
+   */
+  const startRecognitionRef = useRef<(() => void) | null>(null);
   const statusRef = useRef<LiveStatus>("idle");
   const activityRef = useRef<ActivityKind | null>(null);
   const turnBufferRef = useRef("");
@@ -167,11 +183,12 @@ export function useLiveSession({
         // Superseded while waiting its turn.
         if (item.seq < dropBeforeRef.current) continue;
         // "Speak replies" is off: the text still shows on screen and the
-        // captions still work, we just never open the audio pipeline.
-        if (!speakRepliesRef.current) {
-          setStatusSafe("listening");
-          continue;
-        }
+        // captions still work, we just never open the audio pipeline. Note we
+        // must NOT touch the status here — this runs while the turn is still
+        // `thinking`/`speaking`, and claiming "listening" here both lied about
+        // the turn and, now that the mic is paused for the turn, implied it was
+        // open when it is not.
+        if (!speakRepliesRef.current) continue;
         const played = speakRef.current(item.text).catch(() => {});
         currentSpeechRef.current = played;
         try {
@@ -225,6 +242,45 @@ export function useLiveSession({
   }, []);
 
   /**
+   * Stops listening for the duration of a turn. Nothing heard while paused can
+   * dispatch, interrupt or leak into the next turn, because there is no longer
+   * any recogniser running to hear it.
+   */
+  const pauseMic = useCallback(() => {
+    micPausedRef.current = true;
+    setSubtitle("");
+    // Native path: abort the recogniser. `onend` sees the pause flag and does
+    // not schedule its usual restart.
+    try {
+      recognitionRef.current?.abort();
+    } catch {
+      // ignore
+    }
+    recognitionRef.current = null;
+    // Fallback path: stop capturing. `transcribeFallback` drops the segment
+    // because of the pause flag, so nothing is transcribed or dispatched.
+    if (recorderRef.current?.state !== "inactive") {
+      try {
+        recorderRef.current?.stop();
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
+
+  /** Re-opens the mic once the turn is over and the read-out has finished. */
+  const resumeMic = useCallback(() => {
+    if (!activeRef.current || stoppingRef.current) return;
+    micPausedRef.current = false;
+    if (!getNativeRecognition()) {
+      // The stream survives a pause, so only the recorder needs restarting.
+      if (recorderRef.current === null && streamRef.current) startRecorderRef.current?.();
+      return;
+    }
+    if (recognitionRef.current === null) startRecognitionRef.current?.();
+  }, []);
+
+  /**
    * One line, at most, and only if the turn drags on. The old code looped
    * filler every 4.5s, which is what made Ultron sound stuck; now a slow turn
    * says one short line and then goes quiet until the answer.
@@ -264,6 +320,10 @@ export function useLiveSession({
       const clean = text.trim();
       if (!clean) return;
       setSubtitle("");
+      // Stop listening for the whole turn. Ultron is about to talk, and the mic
+      // has no echo cancellation, so leaving it open only feeds it our own
+      // voice. It re-opens the moment the answer has finished being read out.
+      pauseMic();
       setStatusSafe("thinking");
       statusSpokenRef.current = false;
       longWaitSpokenRef.current = false;
@@ -281,16 +341,22 @@ export function useLiveSession({
           setActivity(null);
           await speakReply(reply);
         }
-        if (!activeRef.current) return;
-        setStatusSafe("listening");
       } catch {
         stopLongWait();
         onErrorRef.current?.("Live conversation failed. Switched back to listening.");
-        if (activeRef.current) setStatusSafe("listening");
+      } finally {
+        // Resume even on failure: the mic must never stay shut, or the loop
+        // would be dead for the rest of the session with no visible cause.
+        if (activeRef.current) {
+          setStatusSafe("listening");
+          resumeMic();
+        }
       }
     },
     [
       setStatusSafe,
+      pauseMic,
+      resumeMic,
       announce,
       armLongWait,
       stopLongWait,
@@ -432,6 +498,7 @@ export function useLiveSession({
       if (
         activeRef.current &&
         !stoppingRef.current &&
+        !micPausedRef.current &&
         restartTimerRef.current === null
       ) {
         restartTimerRef.current = window.setTimeout(() => {
@@ -454,6 +521,9 @@ export function useLiveSession({
     const chunks = segmentChunksRef.current;
     segmentChunksRef.current = [];
     if (!chunks.length) return;
+    // The recorder was stopped because the mic is paused, not because the user
+    // finished speaking. This segment is Ultron's own audio — throw it away.
+    if (micPausedRef.current) return;
     const mime = recorderRef.current?.mimeType || "audio/webm";
     const blob = new Blob(chunks, { type: mime });
     try {
@@ -496,6 +566,15 @@ export function useLiveSession({
     recorder.start(1000);
     recorderRef.current = recorder;
   }, [transcribeFallback]);
+
+  // `resumeMic` is declared above both of these, so hand it the callables.
+  useEffect(() => {
+    startRecorderRef.current = startRecorder;
+  }, [startRecorder]);
+
+  useEffect(() => {
+    startRecognitionRef.current = () => startRecognition();
+  });
 
   const startFallback = useCallback(async () => {
     if (!activeRef.current || stoppingRef.current) return;
@@ -583,6 +662,7 @@ export function useLiveSession({
   const stop = useCallback(() => {
     stoppingRef.current = true;
     activeRef.current = false;
+    micPausedRef.current = false;
     stopLongWait();
     cancelQueuedSpeech();
     drainResolversRef.current = [];
@@ -614,6 +694,7 @@ export function useLiveSession({
     return () => {
       stoppingRef.current = true;
       activeRef.current = false;
+      micPausedRef.current = false;
       stopLongWait();
       cancelQueuedSpeech();
       if (dispatchTimerRef.current !== null) {
