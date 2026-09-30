@@ -85,6 +85,14 @@ export function VoicePicker({
       }
       return;
     }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
+      setCursor(null);
+      return;
+    }
+    // Guard the modulus: with no voices loaded yet it would produce NaN.
+    if (!voices.length) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
       setCursor((i) => ((i ?? index) + 1) % voices.length);
@@ -94,10 +102,6 @@ export function VoicePicker({
     } else if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       commit(index);
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      setOpen(false);
-      setCursor(null);
     }
   };
 
@@ -139,7 +143,9 @@ export function VoicePicker({
           role="listbox"
           aria-label="Voices"
           className={cn(
-            "absolute z-50 max-h-72 w-64 overflow-y-auto rounded-2xl border border-[#3a3b40] bg-[#242529] py-1 shadow-[0_8px_30px_rgba(0,0,0,0.35)]",
+            "absolute z-50 max-h-56 w-full min-w-52 overflow-y-auto overscroll-contain rounded-2xl border border-[#3a3b40] bg-[#242529] p-1 shadow-[0_8px_30px_rgba(0,0,0,0.35)]",
+            // Thin bar so a clipped list reads as scrollable, not truncated.
+            "[scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#4a4c53] [&::-webkit-scrollbar-track]:bg-transparent",
             align === "top" ? "bottom-full mb-2" : "top-full mt-2",
           )}
         >
@@ -153,19 +159,19 @@ export function VoicePicker({
               onMouseEnter={() => setCursor(i)}
               onClick={() => commit(i)}
               className={cn(
-                "flex w-full items-start gap-2 px-3 py-2 text-left transition-colors",
+                "flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left transition-colors",
                 i === index ? "bg-[#8B5CF6]/15" : "hover:bg-white/5",
               )}
             >
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="flex items-baseline gap-1.5">
-                  <span className="truncate text-sm text-[#c9cbd1]">{v.name}</span>
+                  <span className="truncate text-xs text-[#c9cbd1]">{v.name}</span>
                   <span className="shrink-0 text-[10px] text-[#8b8d95]">
                     {v.accent} · {v.gender}
                   </span>
                 </span>
                 {v.note && (
-                  <span className="line-clamp-1 text-[11px] text-[#8b8d95]">
+                  <span className="line-clamp-1 text-[10px] text-[#8b8d95]">
                     {v.note}
                   </span>
                 )}
