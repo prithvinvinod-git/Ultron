@@ -1,3 +1,4 @@
+import { publishEspResponse } from '@/ai/esp/broadcast';
 import { runAgent } from "@/ai/agent";
 import { tryStore } from "@/db/store";
 import { randomUUID } from "node:crypto";
@@ -98,6 +99,7 @@ export async function POST(request: Request) {
         );
       } finally {
         if (finalContent !== null) {
+          try { publishEspResponse(finalContent, sessionId); } catch (e) {}
           await tryStore(async (store) => {
             await store.insertMessage({
               id: randomUUID(),
