@@ -21,6 +21,30 @@ export interface EspResponseEvent {
   timestamp: number;
 }
 
+// Event ids are seconds-since-epoch rather than a plain per-instance counter.
+//
+// This module's state is process-local, so on Vercel a cold start used to reset
+// the counter to 0. A device that had already seen id 57 would then ask for
+// "everything after 57" and silently receive nothing until the fresh instance
+// had counted past 57 on its own -- so chat replies stopped reaching the robot
+// with no error anywhere.
+//
+// Seeding from the wall clock keeps ids roughly monotonic across restarts and
+// across separate instances. 1.79e9 seconds fits comfortably in the uint32 the
+// firmware uses for _lastEventId, so the wire format is unchanged.
+//
+// Residual caveat: two instances publishing in the same second can still pick
+// the same id, and a device would skip the loser of that pair. Closing that
+// properly needs shared storage (Redis/KV), not process memory.
+const INSTANCE_OFFSET = Math.floor(Math.random() * 1000);
+
+function nextEventId(): number {
+  const wallClock = Math.floor(Date.now() / 1000);
+  const candidate = wallClock + INSTANCE_OFFSET;
+  globalEventId = Math.max(globalEventId + 1, candidate);
+  return globalEventId;
+}
+
 let globalEventId = 0;
 const eventBuffer: EspResponseEvent[] = [];
 const activeListeners = new Set<(event: EspResponseEvent) => void>();
@@ -37,7 +61,7 @@ export function publishEspResponse(replyText: string, sessionId: string = "web_s
   const token = process.env.ESP_DEVICE_TOKEN || "ultron_secret_123";
   const ttsUrl = `/api/esp/tts?text=${encodeURIComponent(spokenText)}&token=${encodeURIComponent(token)}`;
 
-  globalEventId++;
+  globalEventId = nextEventId();
   const event: EspResponseEvent = {
     id: globalEventId,
     type: "ai_response",

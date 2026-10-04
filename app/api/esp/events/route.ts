@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
         // Send initial comment
         controller.enqueue(encodeEspComment("esp_event_stream_active"));
 
-        // Flush any unread events since requested ID
+// Flush any unread events since requested ID
         const missed = getEventsSince(since);
         for (const ev of missed) {
           controller.enqueue(encodeEspEvent({
@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
             text: ev.text,
             emotion: ev.emotion,
             motion: ev.motion,
-            tts: true,
+            tts: ev.tts,
             tts_text: ev.tts_text,
             session_id: ev.session_id,
           }));
@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
               text: ev.text,
               emotion: ev.emotion,
               motion: ev.motion,
-              tts: true,
+              tts: ev.tts,
               tts_text: ev.tts_text,
               session_id: ev.session_id,
             }));

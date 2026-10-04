@@ -32,6 +32,7 @@ import {
   encodeEspEvent,
   isValidFaceState,
   type EspFaceState,
+  normalizeDeviceId,
 } from "@/ai/esp/protocol";
 import {
   inferEmotion,
@@ -207,14 +208,18 @@ export async function POST(request: Request) {
       if (reply) {
         const emotion = inferEmotion(reply);
         const motion = inferMotion(emotion, reply);
+        const ttsText = toSpokenText(reply);
+        const voice = typeof body.voice === "string" ? body.voice.trim() : (process.env.ESP_TTS_VOICE?.trim() || "jarvis");
+        const token = typeof body.token === "string" ? body.token.trim() : "";
+        const ttsUrl = `/api/esp/tts?text=${encodeURIComponent(ttsText)}&voice=${encodeURIComponent(voice)}&token=${encodeURIComponent(token)}`;
         controller.enqueue(
           encodeEspEvent({
             type: "ai_response",
             text: toDisplayText(reply),
             emotion,
             motion,
-            tts: true,
-            tts_text: toSpokenText(reply),
+            tts: ttsUrl,
+            tts_text: ttsText,
             session_id: sessionId,
           }),
         );

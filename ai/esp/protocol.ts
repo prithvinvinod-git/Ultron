@@ -79,7 +79,7 @@ export type EspEvent =
   | { type: "hello"; protocol: number; device_id: string; session_id: string; server_time: string; tts: { available: boolean; voice: string; format: string; sample_rate: number } }
   | { type: "state"; state: EspFaceState }
   | { type: "ai_delta"; text: string }
-  | { type: "ai_response"; text: string; emotion: EspFaceState; motion: EspMotion; tts: boolean; tts_text: string; session_id: string }
+  | { type: "ai_response"; text: string; emotion: EspFaceState; motion: EspMotion; tts: string; tts_text: string; session_id: string }
   | { type: "error"; message: string }
   | { type: "done" };
 

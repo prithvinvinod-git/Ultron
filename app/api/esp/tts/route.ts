@@ -5,13 +5,18 @@
  *
  * Why this exists when /api/voice/tts already exists:
  * the browser can fetch audio with a POST body, but the ESP32 audio library
- * (`ESP8266Audio`) streams a plain GET URL straight into the I2S driver without
- * ever holding the whole clip in RAM. This route is the same synthesis path
- * exposed as a cacheable-free GET, streamed chunk by chunk.
+ * (`ESP8266Audio`) fetches a plain GET URL and feeds the response straight into
+ * the I2S driver. This route is the same synthesis path exposed as a GET.
  *
  * It reuses `synthesizeSpeech` from the existing voice module — no new engine,
  * no new key, no new dependency. The firmware gets `audio/mpeg` at 24 kHz
  * mono, which is what the free Edge engine already produces.
+ *
+ * The body is returned as a single buffer with an explicit Content-Length.
+ * Returning a ReadableStream instead makes Vercel reply with
+ * `Transfer-Encoding: chunked`, and the audio library does not de-chunk, so the
+ * chunk-size lines get decoded as samples and the speaker outputs noise. See
+ * the comment at the return below.
  *
  * ADDITIVE route. /api/voice/tts is unchanged.
  */
@@ -24,8 +29,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_TEXT = 480;
-/** One chunk of audio handed to the socket per pull; ~4 kB keeps latency low. */
-const CHUNK = 4096;
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -51,18 +54,18 @@ export async function GET(request: Request) {
   }
 
   const bytes = speech.bytes;
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (let off = 0; off < bytes.length; off += CHUNK) {
-        controller.enqueue(new Uint8Array(bytes.subarray(off, off + CHUNK)));
-      }
-      controller.close();
-    },
-  });
 
-  return new Response(stream, {
+  // Sent as ONE body with an explicit Content-Length, never as a
+  // ReadableStream. A stream makes Vercel answer with
+  // `Transfer-Encoding: chunked` and no Content-Length, and the ESP32's audio
+  // library does not de-chunk: it hands the raw response to the MP3 decoder,
+  // so the chunk-size lines (e.g. "1a0\r\n") are decoded as audio and the
+  // speaker outputs garbage instead of speech. synthesizeSpeech has already
+  // buffered the whole clip, so streaming bought no latency anyway.
+  return new Response(new Uint8Array(bytes), {
     headers: {
       "Content-Type": speech.contentType,
+      "Content-Length": String(bytes.length),
       "Cache-Control": "no-store",
       "X-TTS-Engine": speech.engine,
       "X-Audio-Length": String(bytes.length),
