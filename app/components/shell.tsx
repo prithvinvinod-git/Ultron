@@ -106,11 +106,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         <div className="maintenance-grid absolute inset-0 opacity-35" />
         <div className="relative mx-6 flex max-w-lg flex-col items-center text-center">
-          <div className="mb-7 flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.34em] text-white/45">
-            <span className="h-px w-10 bg-white/25" />
-            System maintenance
-            <span className="h-px w-10 bg-white/25" />
-          </div>
           <div className="maintenance-mark mb-7 flex h-24 w-24 items-center justify-center bg-transparent">
             <img
               src="/ultron-logo.png"
@@ -124,10 +119,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <p className="mt-5 max-w-sm text-sm leading-6 text-white/55 sm:text-base">
             We&apos;re tuning the system. The interface remains available while we make improvements.
           </p>
-          <div className="mt-8 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.24em] text-white/40">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
-            Maintenance break
-          </div>
         </div>
       </div>
     </div>
