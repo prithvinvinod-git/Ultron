@@ -106,11 +106,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         <div className="maintenance-grid absolute inset-0 opacity-35" />
         <div className="relative mx-6 flex max-w-lg flex-col items-center text-center">
-          <div className="maintenance-mark mb-7 flex h-24 w-24 items-center justify-center bg-transparent">
+          <div className="maintenance-mark mb-7 flex h-28 w-28 items-center justify-center bg-transparent">
             <img
               src="/ultron-logo.png"
               alt="Ultron logo"
-              className="h-24 w-24 object-contain"
+              className="h-28 w-28 object-contain"
             />
           </div>
           <h1 className="text-balance text-4xl font-semibold tracking-[-0.06em] text-white sm:text-6xl">
