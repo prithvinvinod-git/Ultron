@@ -91,9 +91,7 @@ body {
 
 @layer components {
   .maintenance-overlay {
-    background:
-      radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.12), transparent 28%),
-      linear-gradient(135deg, #050505 0%, #111 48%, #050505 100%);
+    background: #050505;
     isolation: isolate;
   }
 
