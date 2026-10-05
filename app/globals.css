@@ -90,6 +90,43 @@ body {
 }
 
 @layer components {
+  .maintenance-overlay {
+    background:
+      radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0.12), transparent 28%),
+      linear-gradient(135deg, #050505 0%, #111 48%, #050505 100%);
+    isolation: isolate;
+  }
+
+  .maintenance-overlay::before,
+  .maintenance-overlay::after {
+    position: absolute;
+    content: "";
+    pointer-events: none;
+  }
+
+  .maintenance-overlay::before {
+    inset: 0;
+    background: linear-gradient(115deg, transparent 0 42%, rgba(255, 255, 255, 0.08) 42.1% 42.35%, transparent 42.45% 100%);
+    mix-blend-mode: screen;
+  }
+
+  .maintenance-overlay::after {
+    left: 50%;
+    top: 50%;
+    width: min(58vw, 720px);
+    height: min(58vw, 720px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 9999px;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 0 34px rgba(255, 255, 255, 0.018), 0 0 0 68px rgba(255, 255, 255, 0.012);
+  }
+
+  .maintenance-grid {
+    background-image: linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    background-size: 42px 42px;
+    mask-image: radial-gradient(ellipse at center, black 0%, transparent 72%);
+  }
+
   .glass {
     background: rgba(255, 253, 250, 0.03);
     border: 1px solid var(--color-border);
