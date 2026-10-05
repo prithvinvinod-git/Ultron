@@ -113,7 +113,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
           <div className="maintenance-mark mb-7 flex h-16 w-16 items-center justify-center rounded-2xl border border-white/15 bg-white/[0.06] shadow-[0_0_70px_rgba(255,255,255,0.12)]">
             <img
-              src="/ultron-logo.jpg"
+              src="/ultron-logo.png"
               alt="Ultron logo"
               className="h-12 w-12 object-contain"
             />
