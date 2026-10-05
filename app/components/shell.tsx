@@ -104,7 +104,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         aria-hidden="true"
         className="maintenance-overlay fixed inset-0 z-[100] flex items-center justify-center overflow-hidden"
       >
-        <div className="maintenance-grid absolute inset-0 opacity-35" />
         <div className="relative mx-6 flex max-w-lg flex-col items-center text-center">
           <div className="maintenance-mark mb-7 flex h-28 w-28 items-center justify-center bg-transparent">
             <img
