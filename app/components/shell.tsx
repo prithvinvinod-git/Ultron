@@ -99,10 +99,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {children}
       </main>
 
-      {/* Visual maintenance layer: pointer-events-none keeps the app usable underneath. */}
+      {/* Maintenance layer blocks interaction with the interface underneath. */}
       <div
         aria-hidden="true"
-        className="maintenance-overlay pointer-events-none fixed inset-0 z-[100] flex items-center justify-center overflow-hidden"
+        className="maintenance-overlay fixed inset-0 z-[100] flex items-center justify-center overflow-hidden"
       >
         <div className="maintenance-grid absolute inset-0 opacity-35" />
         <div className="relative mx-6 flex max-w-lg flex-col items-center text-center">
