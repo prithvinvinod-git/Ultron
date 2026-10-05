@@ -112,7 +112,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span className="h-px w-10 bg-white/25" />
           </div>
           <div className="maintenance-mark mb-7 flex h-16 w-16 items-center justify-center rounded-2xl border border-white/15 bg-white/[0.06] shadow-[0_0_70px_rgba(255,255,255,0.12)]">
-            <span className="text-2xl font-semibold tracking-[-0.08em] text-white">V</span>
+            <img
+              src="/ultron-logo.jpg"
+              alt="Ultron logo"
+              className="h-12 w-12 object-contain"
+            />
           </div>
           <h1 className="text-balance text-4xl font-semibold tracking-[-0.06em] text-white sm:text-6xl">
             Ultron under development
