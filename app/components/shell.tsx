@@ -98,6 +98,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         {children}
       </main>
+
+      {/* Visual maintenance layer: pointer-events-none keeps the app usable underneath. */}
+      <div
+        aria-hidden="true"
+        className="maintenance-overlay pointer-events-none fixed inset-0 z-[100] flex items-center justify-center overflow-hidden"
+      >
+        <div className="maintenance-grid absolute inset-0 opacity-35" />
+        <div className="relative mx-6 flex max-w-lg flex-col items-center text-center">
+          <div className="mb-7 flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.34em] text-white/45">
+            <span className="h-px w-10 bg-white/25" />
+            System maintenance
+            <span className="h-px w-10 bg-white/25" />
+          </div>
+          <div className="maintenance-mark mb-7 flex h-16 w-16 items-center justify-center rounded-2xl border border-white/15 bg-white/[0.06] shadow-[0_0_70px_rgba(255,255,255,0.12)]">
+            <span className="text-2xl font-semibold tracking-[-0.08em] text-white">V</span>
+          </div>
+          <h1 className="text-balance text-4xl font-semibold tracking-[-0.06em] text-white sm:text-6xl">
+            Ultron under development
+          </h1>
+          <p className="mt-5 max-w-sm text-sm leading-6 text-white/55 sm:text-base">
+            We&apos;re tuning the system. The interface remains available while we make improvements.
+          </p>
+          <div className="mt-8 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.24em] text-white/40">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" />
+            Maintenance break
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
