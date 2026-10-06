@@ -38,6 +38,38 @@ function mergeTranscript(finalText: string, interimText: string): string {
   return [...finalWords, ...interimWords].join(" ");
 }
 
+/**
+ * Append a newly-finalized Web Speech segment once. Chrome can replay the
+ * previous segment when a continuous recognizer is restarted after silence.
+ */
+function appendFinalTranscript(existingText: string, incomingText: string): string {
+  const existing = normalizeTranscript(existingText);
+  const incoming = normalizeTranscript(incomingText);
+  if (!existing) return incoming;
+  if (!incoming) return existing;
+
+  const existingLower = existing.toLowerCase();
+  const incomingLower = incoming.toLowerCase();
+  if (incomingLower === existingLower || existingLower.endsWith(` ${incomingLower}`)) {
+    return existing;
+  }
+  if (incomingLower.startsWith(`${existingLower} `)) {
+    return incoming;
+  }
+
+  const existingWords = existing.split(" ");
+  const incomingWords = incoming.split(" ");
+  const maxOverlap = Math.min(existingWords.length, incomingWords.length);
+  for (let size = maxOverlap; size >= 1; size -= 1) {
+    const left = existingWords.slice(-size).join(" ").toLowerCase();
+    const right = incomingWords.slice(0, size).join(" ").toLowerCase();
+    if (left === right) {
+      return [...existingWords, ...incomingWords.slice(size)].join(" ");
+    }
+  }
+  return `${existing} ${incoming}`;
+}
+
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -368,9 +400,7 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
           else interim += text;
         }
         if (finals) {
-          finalRef.current = finalRef.current.trim()
-            ? `${finalRef.current.trim()} ${finals.trim()}`
-            : finals.trim();
+          finalRef.current = appendFinalTranscript(finalRef.current, finals);
         }
         interimRef.current = interim;
         const combined = mergeTranscript(finalRef.current, interim);
