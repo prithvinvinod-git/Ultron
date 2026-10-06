@@ -88,7 +88,6 @@ export const ELEVEN_VOICES: TtsVoiceDef[] = [
   { key: "domi", engine: "elevenlabs", name: "Domi", gender: "female", locale: "en-US", accent: "American", id: "onwK4e9ZLuTAKqWW03F9" },
   { key: "doodle", engine: "elevenlabs", name: "Doodle", gender: "male", locale: "en-US", accent: "Custom", id: "DODLEQrClDo8wCz460ld", note: "Custom ElevenLabs voice" },
   { key: "custom-voice", engine: "elevenlabs", name: "Custom Voice", gender: "male", locale: "en-US", accent: "Custom", id: "IRHApOXLvnW57QJPQH2P", note: "Custom ElevenLabs voice" },
-  { key: "ultron", engine: "elevenlabs", name: "Ultron", gender: "male", locale: "en-US", accent: "Custom", id: "cPoqAvGWCPfCfyPMwe4z", note: "Custom ElevenLabs voice" },
   { key: "adam", engine: "elevenlabs", name: "Adam", gender: "male", locale: "en-US", accent: "American", id: "pNInz6obpgDQGcFmaJgB" },
 ];
 
