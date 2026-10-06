@@ -17,6 +17,10 @@ export const metadata: Metadata = {
   title: "Ultron — Personal Agentic Assistant",
   description:
     "Your own JARVIS-style agentic assistant — chat, voice, tools, and memory.",
+  icons: {
+    icon: "/icon.png",
+    apple: "/icon.png",
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
