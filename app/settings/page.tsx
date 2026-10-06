@@ -84,7 +84,19 @@ export default function SettingsPage() {
     update({ provider: next.id.slice(0, slash), model: next.id.slice(slash + 1) });
   };
 
-  const canSpeak = voices.length > 0 || mounted;
+  const selectedEngine = settings.ttsEngine;
+  const engineVoices = React.useMemo(
+    () => voices.filter((voice) => voice.engine === selectedEngine),
+    [voices, selectedEngine],
+  );
+  const canSpeak = engineVoices.length > 0 || mounted;
+
+  React.useEffect(() => {
+    if (!engineVoices.length) return;
+    if (!engineVoices.some((voice) => voice.key === settings.voiceKey)) {
+      update({ voiceKey: engineVoices[0].key });
+    }
+  }, [selectedEngine, engineVoices, settings.voiceKey]);
 
   return (
     <div className="mx-auto w-full max-w-2xl px-4 py-10 sm:px-6">
@@ -123,12 +135,38 @@ export default function SettingsPage() {
 
       <section className="mb-8">
         <h2 className="mb-3 text-xs font-semibold tracking-wide uppercase text-[#8b8d95]">
+          Speech engine
+        </h2>
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Text to speech engine">
+          {(["edge", "elevenlabs"] as const).map((engine) => (
+            <button
+              key={engine}
+              type="button"
+              onClick={() => update({ ttsEngine: engine })}
+              className={`rounded-xl border px-3 py-2 text-sm transition-colors ${
+                selectedEngine === engine
+                  ? "border-brand-bright bg-brand-bright/10 text-[#F4F4F5]"
+                  : "border-[#2A2C31] text-[#8b8d95] hover:bg-white/[0.03]"
+              }`}
+              aria-pressed={selectedEngine === engine}
+            >
+              {engine === "edge" ? "Microsoft Edge" : "ElevenLabs"}
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-[#8b8d95]">
+          ElevenLabs voices appear when the project API key is configured.
+        </p>
+      </section>
+
+      <section className="mb-8">
+        <h2 className="mb-3 text-xs font-semibold tracking-wide uppercase text-[#8b8d95]">
           Voice
         </h2>
         {canSpeak ? (
           <>
             <VoicePicker
-              voices={voices}
+              voices={engineVoices}
               voiceKey={settings.voiceKey}
               onChange={(key) => update({ voiceKey: key })}
             />

@@ -17,6 +17,8 @@ export const VOICE_STORAGE_KEY = "ultron.tts.voice";
 const SETTINGS_KEY = "ultron.settings";
 
 export interface AppSettings {
+  /** TTS engine used for assistant speech. */
+  ttsEngine: "edge" | "elevenlabs";
   /** TTS voice key, matching `GET /api/voice/voices`. */
   voiceKey: string;
   /** Speak assistant replies automatically as they land. */
@@ -30,6 +32,7 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  ttsEngine: "edge",
   voiceKey: "aria",
   speakReplies: true,
   provider: "",

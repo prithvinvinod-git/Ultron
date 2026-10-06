@@ -15,6 +15,8 @@ export interface SpeechResult {
 export interface TtsOptions {
   /** Friendly voice key (see EDGE_VOICES / ELEVEN_VOICES) or a raw engine voice id. */
   voice?: string;
+  /** Explicit engine selected in Settings. */
+  engine?: "edge" | "elevenlabs";
 }
 
 /** A curated set of natural Microsoft Edge neural voices (free, no key required). */
@@ -285,14 +287,14 @@ export async function synthesizeSpeech(
   if (!trimmed) return null;
 
   const voice = resolveVoice(options.voice);
-  const forced = process.env.TTS_ENGINE?.toLowerCase();
+  const forced = options.engine ?? process.env.TTS_ENGINE?.toLowerCase();
 
   // Prefer ElevenLabs when the key exists (unless an engine is forced) and
   // the requested/configured voice is ElevenLabs.
   const wantEleven =
-    !forced || forced === "elevenlabs"
-      ? Boolean(process.env.ELEVENLABS_API_KEY) && voice.engine === "elevenlabs"
-      : false;
+    (!forced || forced === "elevenlabs") &&
+    Boolean(process.env.ELEVENLABS_API_KEY) &&
+    (voice.engine === "elevenlabs" || forced === "elevenlabs");
 
   if (wantEleven) {
     const r = await synthesizeElevenLabs(trimmed.slice(0, 4000), voice.id);

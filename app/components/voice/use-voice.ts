@@ -175,10 +175,11 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
         const res = await fetch("/api/voice/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            text: clean.slice(0, 3900),
-            voice: voiceKeyRef.current,
-          }),
+            body: JSON.stringify({
+              text: clean.slice(0, 3900),
+              voice: voiceKeyRef.current,
+              engine: readSettings().ttsEngine,
+            }),
         });
         if (res.ok) {
           if (speakCancelledRef.current) return;
