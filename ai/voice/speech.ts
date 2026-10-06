@@ -293,10 +293,13 @@ export async function synthesizeSpeech(
   if (!trimmed) return null;
 
   const voice = resolveVoice(options.voice);
-  const forced = options.engine ?? process.env.TTS_ENGINE?.toLowerCase();
+  const requestedEngine = options.engine ?? process.env.TTS_ENGINE?.toLowerCase();
+  // A selected ElevenLabs voice must not silently fall back to the default Edge
+  // voice just because an older saved engine preference still says "edge".
+  const forced = voice.engine === "elevenlabs" ? "elevenlabs" : requestedEngine;
 
-  // Prefer ElevenLabs when the key exists (unless an engine is forced) and
-  // the requested/configured voice is ElevenLabs.
+  // Prefer ElevenLabs when the key exists and the selected/configured engine is
+  // ElevenLabs. This keeps custom voice IDs tied to their actual voice provider.
   const wantEleven =
     (!forced || forced === "elevenlabs") &&
     Boolean(process.env.ELEVENLABS_API_KEY) &&
