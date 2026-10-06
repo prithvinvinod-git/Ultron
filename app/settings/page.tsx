@@ -135,6 +135,32 @@ export default function SettingsPage() {
 
       <section className="mb-8">
         <h2 className="mb-3 text-xs font-semibold tracking-wide uppercase text-[#8b8d95]">
+          Voice mode
+        </h2>
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Voice mode">
+          {(["tts", "live"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => update({ voiceMode: mode })}
+              className={`rounded-xl border px-3 py-2 text-sm transition-colors ${
+                settings.voiceMode === mode
+                  ? "border-brand-bright bg-brand-bright/10 text-[#F4F4F5]"
+                  : "border-[#2A2C31] text-[#8b8d95] hover:bg-white/[0.03]"
+              }`}
+              aria-pressed={settings.voiceMode === mode}
+            >
+              {mode === "tts" ? "Push to talk (TTS)" : "Live voice agent"}
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-[#8b8d95]">
+          TTS speaks replies after each turn. Live voice keeps a hands-free conversation running.
+        </p>
+      </section>
+
+      <section className="mb-8">
+        <h2 className="mb-3 text-xs font-semibold tracking-wide uppercase text-[#8b8d95]">
           Speech engine
         </h2>
         <div className="flex flex-wrap gap-2" role="group" aria-label="Text to speech engine">

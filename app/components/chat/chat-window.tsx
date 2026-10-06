@@ -438,6 +438,18 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
     liveSession.start();
   }, [liveSession, end]);
 
+  useEffect(() => {
+    if (settings.voiceMode === "live" && !live) {
+      startLive();
+      return;
+    }
+    if (settings.voiceMode === "tts" && live) {
+      liveSession.stop();
+      end();
+      setLive(false);
+    }
+  }, [settings.voiceMode, live, startLive, liveSession, end]);
+
   const showSuggestions =
     transcript.length === 0 && !streaming && !error && !hydrating && !live;
 
