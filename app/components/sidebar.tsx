@@ -11,7 +11,6 @@ import {
   PanelLeftOpen,
   Plus,
   Settings,
-  Sparkles,
   Trash2,
   Wrench,
 } from "lucide-react";
@@ -64,6 +63,9 @@ export function Sidebar({
   const [sessions, setSessions] = useState<SessionRow[]>(cachedSeed ?? []);
   /** Set while the store is quota-blocked, so we can explain and back off. */
   const [quotaBlocked, setQuotaBlocked] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<SessionRow | null>(null);
+  const pressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressRef = useRef(false);
   const backoffUntilRef = useRef(0);
 
   /**
@@ -125,12 +127,32 @@ export function Sidebar({
     };
   }, [loadSessions]);
 
-  const remove = async (e: React.MouseEvent, id: string) => {
-    e.preventDefault();
-    e.stopPropagation();
+  const remove = async (id: string) => {
     await fetch(`/api/sessions?id=${id}`, { method: "DELETE" });
     clearCache("sessions");
+    setPendingDelete(null);
     loadSessions(true);
+  };
+
+  const startPress = (session: SessionRow) => {
+    longPressRef.current = false;
+    pressTimerRef.current = setTimeout(() => {
+      longPressRef.current = true;
+      setPendingDelete(session);
+    }, 650);
+  };
+
+  const cancelPress = () => {
+    if (pressTimerRef.current) clearTimeout(pressTimerRef.current);
+    pressTimerRef.current = null;
+  };
+
+  const handleSessionClick = (event: React.MouseEvent) => {
+    if (longPressRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+      longPressRef.current = false;
+    }
   };
 
   const nav = (href: string) => {
@@ -247,17 +269,28 @@ export function Sidebar({
                   <div
                     key={s.id}
                     className="group flex items-center gap-2 rounded-[10px] px-2 py-1.5 hover:bg-surface-2/60"
+                    onPointerDown={() => startPress(s)}
+                    onPointerUp={cancelPress}
+                    onPointerLeave={cancelPress}
+                    onPointerCancel={cancelPress}
                   >
                     <Link
                       href={`/?s=${s.id}`}
-                      onClick={onCloseMobile}
+                      onClick={(event) => {
+                        handleSessionClick(event);
+                        onCloseMobile();
+                      }}
                       className="min-w-0 flex-1 truncate text-[13px] text-graphite transition group-hover:text-ink"
                       title={s.title}
                     >
                       {s.title || "New conversation"}
                     </Link>
                     <button
-                      onClick={(e) => remove(e, s.id)}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setPendingDelete(s);
+                      }}
                       className="text-mist opacity-0 transition hover:text-bad group-hover:opacity-100"
                       aria-label="Delete session"
                     >
@@ -299,9 +332,11 @@ export function Sidebar({
         )}
       >
         <div className="flex items-center gap-3 px-5 pt-5 pb-4">
-          <div className="core-gradient flex h-10 w-10 items-center justify-center rounded-2xl text-lg font-extrabold text-white shadow-lg shadow-brand/30">
-            <Sparkles size={20} />
-          </div>
+          <img
+            src="/ultron-logo.png"
+            alt="Ultron logo"
+            className="h-10 w-10 shrink-0 rounded-2xl object-contain"
+          />
           <div className="leading-tight">
             <div className="text-[15px] font-semibold tracking-tight text-ink">
               Ultron
@@ -353,17 +388,28 @@ export function Sidebar({
               <div
                 key={s.id}
                 className="group flex items-center gap-2 rounded-[10px] px-2 py-1.5 hover:bg-surface-2/60"
+                onPointerDown={() => startPress(s)}
+                onPointerUp={cancelPress}
+                onPointerLeave={cancelPress}
+                onPointerCancel={cancelPress}
               >
                 <Link
                   href={`/?s=${s.id}`}
-                  onClick={onCloseMobile}
+                  onClick={(event) => {
+                    handleSessionClick(event);
+                    onCloseMobile();
+                  }}
                   className="min-w-0 flex-1 truncate text-[13px] text-graphite transition group-hover:text-ink"
                   title={s.title}
                 >
                   {s.title || "New conversation"}
                 </Link>
                 <button
-                  onClick={(e) => remove(e, s.id)}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setPendingDelete(s);
+                  }}
                   className="text-mist opacity-0 transition hover:text-bad group-hover:opacity-100"
                   aria-label="Delete session"
                 >
@@ -381,6 +427,45 @@ export function Sidebar({
           </div>
         </div>
       </aside>
+
+      {pendingDelete && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+          role="presentation"
+          onClick={() => setPendingDelete(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-session-title"
+            className="w-full max-w-sm rounded-2xl border border-border bg-surface p-5 shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="delete-session-title" className="text-base font-semibold text-ink">
+              Delete conversation?
+            </h2>
+            <p className="mt-2 truncate text-sm text-mist">
+              “{pendingDelete.title || "New conversation"}” will be permanently removed.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingDelete(null)}
+                className="rounded-lg px-3 py-2 text-sm text-mist transition hover:bg-surface-2 hover:text-ink"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void remove(pendingDelete.id)}
+                className="rounded-lg bg-bad px-3 py-2 text-sm font-medium text-white transition hover:opacity-90"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
