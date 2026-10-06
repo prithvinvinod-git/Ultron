@@ -154,9 +154,11 @@ export function Sidebar({
             collapsed ? "justify-center" : "gap-3 px-5",
           )}
         >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-black shadow-lg shadow-brand/20">
-            <img src="/ultron-logo.png" alt="Ultron logo" className="h-full w-full object-cover" />
-          </div>
+          <img
+            src="/ultron-logo.png"
+            alt="Ultron logo"
+            className="h-10 w-10 shrink-0 object-contain"
+          />
           {!collapsed && (
             <div className="leading-tight">
               <div className="text-[15px] font-semibold tracking-tight text-ink">
