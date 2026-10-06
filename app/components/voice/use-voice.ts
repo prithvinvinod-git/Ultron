@@ -193,15 +193,16 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
       const clean = text.trim();
       if (!clean) return;
       speakCancelledRef.current = false;
+      const selectedEngine = readSettings().ttsEngine;
       try {
         const res = await fetch("/api/voice/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              text: clean.slice(0, 3900),
-              voice: voiceKeyRef.current,
-              engine: readSettings().ttsEngine,
-            }),
+          body: JSON.stringify({
+            text: clean.slice(0, 3900),
+            voice: voiceKeyRef.current,
+            engine: selectedEngine,
+          }),
         });
         if (res.ok) {
           if (speakCancelledRef.current) return;
@@ -222,19 +223,24 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
             audio.onended = finish;
             audio.onerror = () => {
               finish();
-              if (!speakCancelledRef.current) void speakBrowser(clean);
+              if (!speakCancelledRef.current && selectedEngine !== "elevenlabs") {
+                void speakBrowser(clean);
+              }
             };
             void audio.play().catch(() => {
               finish();
-              if (!speakCancelledRef.current) void speakBrowser(clean);
+              if (!speakCancelledRef.current && selectedEngine !== "elevenlabs") {
+                void speakBrowser(clean);
+              }
             });
           });
           return;
         }
       } catch {
-        // fall through to browser TTS
+        // Keep an explicit ElevenLabs selection from silently changing voices.
+        if (selectedEngine === "elevenlabs") return;
       }
-      await speakBrowser(clean);
+      if (selectedEngine !== "elevenlabs") await speakBrowser(clean);
     },
     [resolveSpeaking, speakBrowser],
   );
