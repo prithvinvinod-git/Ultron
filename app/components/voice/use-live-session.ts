@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Conversation, type Conversation as ElevenLabsConversation } from "@elevenlabs/client";
 import {
   activitySpokenWord,
   isStopPhrase,
@@ -23,6 +24,8 @@ export interface UseLiveSessionOptions {
    * shown and returned, it is just never read aloud.
    */
   speakReplies?: boolean;
+  /** When set, use the ElevenLabs Conversational AI agent instead of local STT/TTS. */
+  elevenLabsAgent?: boolean;
 }
 
 type NativeRecognition = {
@@ -73,6 +76,7 @@ export function useLiveSession({
   onInterrupt,
   onError,
   speakReplies = true,
+  elevenLabsAgent = false,
 }: UseLiveSessionOptions) {
   const [status, setStatus] = useState<LiveStatus>("idle");
   const [subtitle, setSubtitle] = useState("");
@@ -117,6 +121,7 @@ export function useLiveSession({
   const statusSpokenRef = useRef(false);
   /** At most one long-wait line per command, so silence is covered, not filled. */
   const longWaitSpokenRef = useRef(false);
+  const elevenLabsConversationRef = useRef<ElevenLabsConversation | null>(null);
 
   /*
    * Speech queue. An explicit queue (rather than a chain of promises) is what
@@ -655,13 +660,43 @@ export function useLiveSession({
     activityRef.current = null;
     setActivity(null);
     setStatusSafe("listening");
+
+    if (elevenLabsAgent) {
+      void (async () => {
+        try {
+          const response = await fetch("/api/voice/elevenlabs/signed-url", { cache: "no-store" });
+          const data = (await response.json()) as { signedUrl?: string; error?: string };
+          if (!response.ok || !data.signedUrl) throw new Error(data.error ?? "Could not start ElevenLabs agent.");
+          if (!activeRef.current) return;
+          elevenLabsConversationRef.current = await Conversation.startSession({
+            signedUrl: data.signedUrl,
+            onConnect: () => setStatusSafe("listening"),
+            onDisconnect: () => {
+              if (activeRef.current) setStatusSafe("idle");
+            },
+            onError: (message) => onErrorRef.current?.(String(message)),
+            onModeChange: ({ mode }) => setStatusSafe(mode === "speaking" ? "speaking" : "listening"),
+          });
+        } catch (error) {
+          activeRef.current = false;
+          setStatusSafe("idle");
+          onErrorRef.current?.(error instanceof Error ? error.message : "ElevenLabs live agent failed to start.");
+        }
+      })();
+      return;
+    }
+
     if (getNativeRecognition()) startRecognition();
     else void startFallback();
-  }, [setStatusSafe, startRecognition, startFallback]);
+  }, [elevenLabsAgent, setStatusSafe, startRecognition, startFallback]);
 
   const stop = useCallback(() => {
     stoppingRef.current = true;
     activeRef.current = false;
+    if (elevenLabsConversationRef.current) {
+      void elevenLabsConversationRef.current.endSession().catch(() => {});
+      elevenLabsConversationRef.current = null;
+    }
     micPausedRef.current = false;
     stopLongWait();
     cancelQueuedSpeech();
