@@ -16,18 +16,26 @@ export interface UseVoiceOptions {
   onError?: (message: string) => void;
 }
 
-function collapseRepeatedTranscript(text: string): string {
-  const normalized = text.trim().replace(/\s+/g, " ");
-  if (!normalized) return "";
-  const words = normalized.split(" ");
-  for (let size = Math.floor(words.length / 2); size >= 1; size -= 1) {
-    const left = words.slice(-size).join(" ").toLowerCase();
-    const right = words.slice(-size * 2, -size).join(" ").toLowerCase();
+function normalizeTranscript(text: string): string {
+  return text.trim().replace(/\s+/g, " ");
+}
+
+/** Merge Web Speech final and interim text without repeating their overlap. */
+function mergeTranscript(finalText: string, interimText: string): string {
+  const finalWords = normalizeTranscript(finalText).split(" ").filter(Boolean);
+  const interimWords = normalizeTranscript(interimText).split(" ").filter(Boolean);
+  if (!finalWords.length) return interimWords.join(" ");
+  if (!interimWords.length) return finalWords.join(" ");
+
+  const maxOverlap = Math.min(finalWords.length, interimWords.length);
+  for (let size = maxOverlap; size >= 1; size -= 1) {
+    const left = finalWords.slice(-size).join(" ").toLowerCase();
+    const right = interimWords.slice(0, size).join(" ").toLowerCase();
     if (left === right) {
-      return words.slice(0, -size).join(" ").trim();
+      return [...finalWords, ...interimWords.slice(size)].join(" ");
     }
   }
-  return normalized;
+  return [...finalWords, ...interimWords].join(" ");
 }
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -284,17 +292,15 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
     sessionRef.current = false;
     wantListeningRef.current = false;
     setListening(false);
-    const text =
-      finalRef.current +
-      (interimRef.current
-        ? (finalRef.current ? " " : "") + interimRef.current
-        : "");
+    const text = mergeTranscript(finalRef.current, interimRef.current);
     const skipPlaceholder = skipPlaceholderRef.current;
     skipPlaceholderRef.current = false;
     finalRef.current = "";
     interimRef.current = "";
     if (text.trim()) {
-      const clean = collapseRepeatedTranscript(text);
+      // Use the raw transcript from the recognizer without aggressive de-duplication.
+      // The Web Speech API handles its own duplicate suppression during recognition.
+      const clean = text.trim();
       if (!clean) return;
       if (onFinalize) onFinalize(clean);
       else onTranscript(clean);
@@ -361,10 +367,8 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
             : finals.trim();
         }
         interimRef.current = interim;
-        const combined =
-          finalRef.current + (interim ? (finalRef.current ? " " : "") + interim : "");
-        const cleanCombined = collapseRepeatedTranscript(combined);
-        if (cleanCombined) onTranscript(cleanCombined);
+        const combined = mergeTranscript(finalRef.current, interim);
+        if (combined) onTranscript(combined);
       };
 
       recognition.onerror = (ev) => {
