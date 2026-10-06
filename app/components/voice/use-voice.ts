@@ -16,18 +16,58 @@ export interface UseVoiceOptions {
   onError?: (message: string) => void;
 }
 
-function collapseRepeatedTranscript(text: string): string {
-  const normalized = text.trim().replace(/\s+/g, " ");
-  if (!normalized) return "";
-  const words = normalized.split(" ");
-  for (let size = Math.floor(words.length / 2); size >= 1; size -= 1) {
-    const left = words.slice(-size).join(" ").toLowerCase();
-    const right = words.slice(-size * 2, -size).join(" ").toLowerCase();
+function normalizeTranscript(text: string): string {
+  return text.trim().replace(/\s+/g, " ");
+}
+
+/** Merge Web Speech final and interim text without repeating their overlap. */
+function mergeTranscript(finalText: string, interimText: string): string {
+  const finalWords = normalizeTranscript(finalText).split(" ").filter(Boolean);
+  const interimWords = normalizeTranscript(interimText).split(" ").filter(Boolean);
+  if (!finalWords.length) return interimWords.join(" ");
+  if (!interimWords.length) return finalWords.join(" ");
+
+  const maxOverlap = Math.min(finalWords.length, interimWords.length);
+  for (let size = maxOverlap; size >= 1; size -= 1) {
+    const left = finalWords.slice(-size).join(" ").toLowerCase();
+    const right = interimWords.slice(0, size).join(" ").toLowerCase();
     if (left === right) {
-      return words.slice(0, -size).join(" ").trim();
+      return [...finalWords, ...interimWords.slice(size)].join(" ");
     }
   }
-  return normalized;
+  return [...finalWords, ...interimWords].join(" ");
+}
+
+/**
+ * Append a newly-finalized Web Speech segment once. Chrome can replay the
+ * previous segment when a continuous recognizer is restarted after silence.
+ */
+function appendFinalTranscript(existingText: string, incomingText: string): string {
+  const existing = normalizeTranscript(existingText);
+  const incoming = normalizeTranscript(incomingText);
+  if (!existing) return incoming;
+  if (!incoming) return existing;
+
+  const existingLower = existing.toLowerCase();
+  const incomingLower = incoming.toLowerCase();
+  if (incomingLower === existingLower || existingLower.endsWith(` ${incomingLower}`)) {
+    return existing;
+  }
+  if (incomingLower.startsWith(`${existingLower} `)) {
+    return incoming;
+  }
+
+  const existingWords = existing.split(" ");
+  const incomingWords = incoming.split(" ");
+  const maxOverlap = Math.min(existingWords.length, incomingWords.length);
+  for (let size = maxOverlap; size >= 1; size -= 1) {
+    const left = existingWords.slice(-size).join(" ").toLowerCase();
+    const right = incomingWords.slice(0, size).join(" ").toLowerCase();
+    if (left === right) {
+      return [...existingWords, ...incomingWords.slice(size)].join(" ");
+    }
+  }
+  return `${existing} ${incoming}`;
 }
 
 function blobToBase64(blob: Blob): Promise<string> {
@@ -185,15 +225,16 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
       const clean = text.trim();
       if (!clean) return;
       speakCancelledRef.current = false;
+      const selectedEngine = readSettings().ttsEngine;
       try {
         const res = await fetch("/api/voice/tts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              text: clean.slice(0, 3900),
-              voice: voiceKeyRef.current,
-              engine: readSettings().ttsEngine,
-            }),
+          body: JSON.stringify({
+            text: clean.slice(0, 3900),
+            voice: voiceKeyRef.current,
+            engine: selectedEngine,
+          }),
         });
         if (res.ok) {
           if (speakCancelledRef.current) return;
@@ -214,19 +255,24 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
             audio.onended = finish;
             audio.onerror = () => {
               finish();
-              if (!speakCancelledRef.current) void speakBrowser(clean);
+              if (!speakCancelledRef.current && selectedEngine !== "elevenlabs") {
+                void speakBrowser(clean);
+              }
             };
             void audio.play().catch(() => {
               finish();
-              if (!speakCancelledRef.current) void speakBrowser(clean);
+              if (!speakCancelledRef.current && selectedEngine !== "elevenlabs") {
+                void speakBrowser(clean);
+              }
             });
           });
           return;
         }
       } catch {
-        // fall through to browser TTS
+        // Keep an explicit ElevenLabs selection from silently changing voices.
+        if (selectedEngine === "elevenlabs") return;
       }
-      await speakBrowser(clean);
+      if (selectedEngine !== "elevenlabs") await speakBrowser(clean);
     },
     [resolveSpeaking, speakBrowser],
   );
@@ -284,17 +330,15 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
     sessionRef.current = false;
     wantListeningRef.current = false;
     setListening(false);
-    const text =
-      finalRef.current +
-      (interimRef.current
-        ? (finalRef.current ? " " : "") + interimRef.current
-        : "");
+    const text = mergeTranscript(finalRef.current, interimRef.current);
     const skipPlaceholder = skipPlaceholderRef.current;
     skipPlaceholderRef.current = false;
     finalRef.current = "";
     interimRef.current = "";
     if (text.trim()) {
-      const clean = collapseRepeatedTranscript(text);
+      // Use the raw transcript from the recognizer without aggressive de-duplication.
+      // The Web Speech API handles its own duplicate suppression during recognition.
+      const clean = text.trim();
       if (!clean) return;
       if (onFinalize) onFinalize(clean);
       else onTranscript(clean);
@@ -356,15 +400,11 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
           else interim += text;
         }
         if (finals) {
-          finalRef.current = finalRef.current.trim()
-            ? `${finalRef.current.trim()} ${finals.trim()}`
-            : finals.trim();
+          finalRef.current = appendFinalTranscript(finalRef.current, finals);
         }
         interimRef.current = interim;
-        const combined =
-          finalRef.current + (interim ? (finalRef.current ? " " : "") + interim : "");
-        const cleanCombined = collapseRepeatedTranscript(combined);
-        if (cleanCombined) onTranscript(cleanCombined);
+        const combined = mergeTranscript(finalRef.current, interim);
+        if (combined) onTranscript(combined);
       };
 
       recognition.onerror = (ev) => {

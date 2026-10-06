@@ -424,6 +424,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
     onInterrupt: interruptActive,
     onError: (message) => setError(message),
     speakReplies: settings.speakReplies,
+    elevenLabsAgent: settings.liveEngine === "elevenlabs",
   });
 
   useEffect(() => {

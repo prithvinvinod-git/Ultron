@@ -48,11 +48,13 @@ export function MessageBubble({
     !!timeline && (!message.streaming || hasTools);
 
   return (
-    <div className="animate-rise flex w-full gap-3">
+    <div className="animate-rise flex w-full gap-3 font-sans text-[13px]">
       {!isUser && (
-        <div className="core-gradient mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-xl text-[11px] font-bold text-white">
-          U
-        </div>
+        <img
+          src="/ultron-logo.png"
+          alt="Ultron"
+          className="mt-1 h-7 w-7 shrink-0 rounded-xl object-contain"
+        />
       )}
 
       <div className={cn("flex min-w-0 max-w-full flex-col gap-1", isUser && "ml-auto")}>
@@ -64,7 +66,7 @@ export function MessageBubble({
         )}
 
         {isUser ? (
-          <div className="ml-auto max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-surface-3 px-4 py-2.5 text-[14.5px] leading-relaxed text-ink">
+          <div className="ml-auto max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-surface-3 px-4 py-2.5 text-[13.5px] leading-relaxed text-ink">
             {message.text}
           </div>
         ) : (

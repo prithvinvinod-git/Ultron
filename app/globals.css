@@ -1,44 +1,43 @@
 @import "tailwindcss";
 
 @theme {
-  --color-canvas: #1a1714;
-  --color-surface: #211d19;
-  --color-surface-2: #2a251f;
-  --color-surface-3: #332c25;
-  --color-border: #3a332b;
-  --color-border-strong: #4d443a;
-  --color-ink: #f4f1ea;
-  --color-graphite: #c0b9ad;
-  --color-mist: #8f877a;
-  --color-brand: #d97757;
-  --color-brand-bright: #f0916f;
-  --color-brand-deep: #a54b2e;
-  --color-sigil: #e8b87a;
-  --color-good: #6fbf8f;
-  --color-warn: #e0b24e;
-  --color-bad: #e06c5c;
+  --color-canvas: #000000;
+  --color-surface: #050505;
+  --color-surface-2: #0b0b0b;
+  --color-surface-3: #111111;
+  --color-border: #1c1c1c;
+  --color-border-strong: #2d2d2d;
+  --color-ink: #ededed;
+  --color-graphite: #a1a1aa;
+  --color-mist: #71717a;
+  --color-brand: #ef4444;
+  --color-brand-bright: #f87171;
+  --color-brand-deep: #b91c1c;
+  --color-sigil: #d4d4d8;
+  --color-good: #34d399;
+  --color-warn: #fbbf24;
+  --color-bad: #f87171;
 
-  --color-background: #1a1714;
-  --color-foreground: #f4f1ea;
-  --color-card: #211d19;
-  --color-card-foreground: #f4f1ea;
-  --color-popover: #2a251f;
-  --color-popover-foreground: #f4f1ea;
-  --color-primary: #d97757;
-  --color-primary-foreground: #1a1714;
-  --color-secondary: #332c25;
-  --color-secondary-foreground: #f4f1ea;
-  --color-muted: #2a251f;
-  --color-muted-foreground: #8f877a;
-  --color-accent: #332c25;
-  --color-accent-foreground: #f4f1ea;
-  --color-destructive: #e06c5c;
-  --color-destructive-foreground: #1a1714;
-  --color-border: #3a332b;
-  --color-input: #3a332b;
-  --color-ring: #d97757;
+  --color-background: #000000;
+  --color-foreground: #ededed;
+  --color-card: #050505;
+  --color-card-foreground: #ededed;
+  --color-popover: #080808;
+  --color-popover-foreground: #ededed;
+  --color-primary: #ef4444;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #171717;
+  --color-secondary-foreground: #ededed;
+  --color-muted: #171717;
+  --color-muted-foreground: #a1a1aa;
+  --color-accent: #1f1f1f;
+  --color-accent-foreground: #ededed;
+  --color-destructive: #f87171;
+  --color-destructive-foreground: #000000;
+  --color-input: #262626;
+  --color-ring: #ef4444;
 
-  --font-sans: var(--font-space-grotesk), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
 
   --radius-card: 16px;
@@ -56,11 +55,11 @@ body {
 }
 
 body {
-  background:
-    radial-gradient(1200px 600px at 70% -10%, rgba(217, 119, 87, 0.06), transparent 60%),
-    var(--color-canvas);
-  background-attachment: fixed;
+  background: var(--color-canvas);
   color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.5;
   font-weight: 400;
   letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
@@ -108,11 +107,11 @@ body {
   }
 
   .core-gradient {
-    background: linear-gradient(120deg, #d97757 0%, #e8b87a 100%);
+    background: linear-gradient(120deg, #10a37f 0%, #19c598 100%);
   }
 
   .gradient-text {
-    background: linear-gradient(120deg, #f0916f 0%, #e8c07a 100%);
+    background: linear-gradient(120deg, #19c598 0%, #d1d5db 100%);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -259,8 +258,12 @@ body {
   .chat-markdown > :last-child {
     margin-bottom: 0;
   }
+  .chat-markdown {
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
   .chat-markdown p {
-    margin: 0.5rem 0;
+    margin: 0.45rem 0;
   }
   .chat-markdown ul,
   .chat-markdown ol {

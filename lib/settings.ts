@@ -19,6 +19,10 @@ const SETTINGS_KEY = "ultron.settings";
 export interface AppSettings {
   /** TTS engine used for assistant speech. */
   ttsEngine: "edge" | "elevenlabs";
+  /** Voice interaction mode used by the chat controls. */
+  voiceMode: "tts" | "live";
+  /** Engine used when the Live mode control is started. */
+  liveEngine: "native" | "elevenlabs";
   /** TTS voice key, matching `GET /api/voice/voices`. */
   voiceKey: string;
   /** Speak assistant replies automatically as they land. */
@@ -33,6 +37,8 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   ttsEngine: "edge",
+  voiceMode: "tts",
+  liveEngine: "elevenlabs",
   voiceKey: "aria",
   speakReplies: true,
   provider: "",
