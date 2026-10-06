@@ -86,6 +86,8 @@ export const ELEVEN_VOICES: TtsVoiceDef[] = [
   { key: "george", engine: "elevenlabs", name: "George", gender: "male", locale: "en-US", accent: "American", id: "JBFqnCBsd6RMkjVDRZzb" },
   { key: "charlie", engine: "elevenlabs", name: "Charlie", gender: "male", locale: "en-US", accent: "American", id: "IKne3meq5aSn9XLyUdCD" },
   { key: "domi", engine: "elevenlabs", name: "Domi", gender: "female", locale: "en-US", accent: "American", id: "onwK4e9ZLuTAKqWW03F9" },
+  { key: "doodle", engine: "elevenlabs", name: "Doodle", gender: "male", locale: "en-US", accent: "Custom", id: "DODLEQrClDo8wCz460ld", note: "Custom ElevenLabs voice" },
+  { key: "custom-voice", engine: "elevenlabs", name: "Custom Voice", gender: "male", locale: "en-US", accent: "Custom", id: "IRHApOXLvnW57QJPQH2P", note: "Custom ElevenLabs voice" },
   { key: "adam", engine: "elevenlabs", name: "Adam", gender: "male", locale: "en-US", accent: "American", id: "pNInz6obpgDQGcFmaJgB" },
 ];
 
@@ -159,6 +161,10 @@ async function synthesizeEdge(
 }
 
 /** Synthesize with ElevenLabs (Flash v2.5 — best quality, low latency). */
+function stripAudioTags(text: string): string {
+  return text.replace(/\[(?:[^\]]+)\]/g, "").replace(/\s{2,}/g, " ").trim();
+}
+
 async function synthesizeElevenLabs(
   text: string,
   voiceId: string,
@@ -174,7 +180,7 @@ async function synthesizeElevenLabs(
       },
       body: JSON.stringify({
         text,
-        model_id: "eleven_flash_v2_5",
+        model_id: "eleven_v3",
         output_format: "mp3_44100_128",
         voice_settings: { stability: 0.5, similarity_boost: 0.75, style: 0.2 },
       }),
@@ -307,7 +313,7 @@ export async function synthesizeSpeech(
     // the best free voice rather than going silent.
     const edgeVoice =
       voice.engine === "elevenlabs" ? EDGE_VOICES[0] : voice;
-    const r = await synthesizeEdge(trimmed.slice(0, 4000), edgeVoice);
+    const r = await synthesizeEdge(stripAudioTags(trimmed).slice(0, 4000), edgeVoice);
     if (r) return r;
   }
 
