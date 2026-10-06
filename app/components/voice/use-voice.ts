@@ -16,6 +16,20 @@ export interface UseVoiceOptions {
   onError?: (message: string) => void;
 }
 
+function collapseRepeatedTranscript(text: string): string {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  if (!normalized) return "";
+  const words = normalized.split(" ");
+  for (let size = Math.floor(words.length / 2); size >= 1; size -= 1) {
+    const left = words.slice(-size).join(" ").toLowerCase();
+    const right = words.slice(-size * 2, -size).join(" ").toLowerCase();
+    if (left === right) {
+      return words.slice(0, -size).join(" ").trim();
+    }
+  }
+  return normalized;
+}
+
 function blobToBase64(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -280,7 +294,8 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
     finalRef.current = "";
     interimRef.current = "";
     if (text.trim()) {
-      const clean = text.trim();
+      const clean = collapseRepeatedTranscript(text);
+      if (!clean) return;
       if (onFinalize) onFinalize(clean);
       else onTranscript(clean);
     } else if (!skipPlaceholder) {
@@ -348,7 +363,8 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
         interimRef.current = interim;
         const combined =
           finalRef.current + (interim ? (finalRef.current ? " " : "") + interim : "");
-        if (combined.trim()) onTranscript(combined.trim());
+        const cleanCombined = collapseRepeatedTranscript(combined);
+        if (cleanCombined) onTranscript(cleanCombined);
       };
 
       recognition.onerror = (ev) => {
