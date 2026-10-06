@@ -10,9 +10,9 @@
   --color-ink: #f7f7f8;
   --color-graphite: #c5c5c5;
   --color-mist: #9b9b9b;
-  --color-brand: #10a37f;
-  --color-brand-bright: #19c598;
-  --color-brand-deep: #087f62;
+  --color-brand: #d95757;
+  --color-brand-bright: #ed6a6a;
+  --color-brand-deep: #a93f47;
   --color-sigil: #d1d5db;
   --color-good: #34d399;
   --color-warn: #fbbf24;
@@ -258,8 +258,12 @@ body {
   .chat-markdown > :last-child {
     margin-bottom: 0;
   }
+  .chat-markdown {
+    font-size: 0.875rem;
+    line-height: 1.55;
+  }
   .chat-markdown p {
-    margin: 0.5rem 0;
+    margin: 0.45rem 0;
   }
   .chat-markdown ul,
   .chat-markdown ol {

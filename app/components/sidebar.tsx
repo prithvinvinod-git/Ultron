@@ -154,8 +154,8 @@ export function Sidebar({
             collapsed ? "justify-center" : "gap-3 px-5",
           )}
         >
-          <div className="core-gradient flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-lg font-extrabold text-white shadow-lg shadow-brand/30">
-            <Sparkles size={20} />
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-2xl bg-black shadow-lg shadow-brand/20">
+            <img src="/ultron-logo.png" alt="Ultron logo" className="h-full w-full object-cover" />
           </div>
           {!collapsed && (
             <div className="leading-tight">

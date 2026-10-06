@@ -424,7 +424,7 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
     onInterrupt: interruptActive,
     onError: (message) => setError(message),
     speakReplies: settings.speakReplies,
-    elevenLabsAgent: true,
+    elevenLabsAgent: settings.liveEngine === "elevenlabs",
   });
 
   useEffect(() => {
@@ -438,18 +438,6 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
     setLive(true);
     liveSession.start();
   }, [liveSession, end]);
-
-  useEffect(() => {
-    if (settings.voiceMode === "live" && !live) {
-      startLive();
-      return;
-    }
-    if (settings.voiceMode === "tts" && live) {
-      liveSession.stop();
-      end();
-      setLive(false);
-    }
-  }, [settings.voiceMode, live, startLive, liveSession, end]);
 
   const showSuggestions =
     transcript.length === 0 && !streaming && !error && !hydrating && !live;

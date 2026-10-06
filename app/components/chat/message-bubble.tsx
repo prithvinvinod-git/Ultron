@@ -64,7 +64,7 @@ export function MessageBubble({
         )}
 
         {isUser ? (
-          <div className="ml-auto max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-surface-3 px-4 py-2.5 text-[14.5px] leading-relaxed text-ink">
+          <div className="ml-auto max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-surface-3 px-4 py-2.5 text-[13.5px] leading-relaxed text-ink">
             {message.text}
           </div>
         ) : (
