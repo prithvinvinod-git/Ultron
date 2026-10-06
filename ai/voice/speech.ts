@@ -181,12 +181,20 @@ async function synthesizeElevenLabs(
       },
       body: JSON.stringify({
         text,
-        model_id: "eleven_v3",
+        model_id: "eleven_multilingual_v2",
         output_format: "mp3_44100_128",
         voice_settings: { stability: 0.5, similarity_boost: 0.75, style: 0.2 },
       }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.error("[voice] ElevenLabs synthesis failed", {
+        status: res.status,
+        voiceId,
+        detail: detail.slice(0, 500),
+      });
+      return null;
+    }
     return {
       bytes: Buffer.from(await res.arrayBuffer()),
       contentType:
@@ -320,6 +328,10 @@ export async function synthesizeSpeech(
     const r = await synthesizeEdge(stripAudioTags(trimmed).slice(0, 4000), edgeVoice);
     if (r) return r;
   }
+
+  // Do not silently switch providers after an explicit ElevenLabs selection.
+  // That makes a failed custom voice sound like an unrelated female fallback.
+  if (forced === "elevenlabs") return null;
 
   // Legacy engines (kept for backwards compatibility / when keys are active).
   const g = await synthesizeGroq(trimmed, "tara");
