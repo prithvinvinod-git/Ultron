@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
-  let body: { text?: string; voice?: string };
+  let body: { text?: string; voice?: string; engine?: "edge" | "elevenlabs" };
   try {
     body = await request.json();
   } catch {
@@ -16,7 +16,10 @@ export async function POST(request: Request) {
   if (!text) return jsonError(400, "text is required.");
   if (text.length > 4000) return jsonError(413, "text too long (max 4000 chars).");
 
-  const speech = await synthesizeSpeech(text, { voice: body.voice });
+  const speech = await synthesizeSpeech(text, {
+    voice: body.voice,
+    engine: body.engine,
+  });
   if (!speech) {
     return jsonError(
       503,
