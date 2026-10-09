@@ -1,9 +1,10 @@
 "use client";
 
-import { memo, useState } from "react";
+import { isValidElement, memo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
+import { HtmlPreview, VisualizationBlock, parseVizSpec } from "@/app/components/chat/visual-block";
 
 function CodeBlock({
   className,
@@ -52,6 +53,18 @@ export const Markdown = memo(function Markdown({
         remarkPlugins={[remarkGfm]}
         components={{
           pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+          code: ({ className, children, ...props }) => {
+            const language = className?.replace("language-", "");
+            const source = String(children).replace(/\\n$/, "");
+            if (language === "ultron-viz") {
+              const spec = parseVizSpec(source);
+              return spec ? <VisualizationBlock spec={spec} /> : <code className={className} {...props}>{children}</code>;
+            }
+            if (language === "html" || language === "html-preview") {
+              return <HtmlPreview source={source} />;
+            }
+            return <code className={className} {...props}>{children}</code>;
+          },
         }}
       >
         {children}

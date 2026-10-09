@@ -322,16 +322,24 @@ ANSWER SHAPE
 - Favour scannable structure for anything longer than a few sentences.`;
 
   const web = `WEB ACCESS — IMPORTANT
-- Whenever the user mentions searching or looking something up, or asks about anything current (news, releases, prices, scores, weather, "what's new", "latest", "right now"), you MUST call search_web before answering. Never answer those from memory.
-- Be economical: one search is usually enough, and open_url only when a snippet is genuinely insufficient. Once you can answer, answer — do not keep researching.`;
+  - Whenever the user mentions searching or looking something up, or asks about anything current (news, releases, prices, scores, weather, "what's new", "latest", "right now"), you MUST call search_web before answering. Never answer those from memory.
+  - Be economical: one search is usually enough, and open_url only when a snippet is genuinely insufficient. Once you can answer, answer — do not keep researching.`;
+
+  const visuals = `VISUAL OUTPUTS — TEXT MODE
+  - When a graph, matrix, vector, equation, or scientific plot materially improves the answer, add a fenced block tagged ultron-viz containing valid JSON. Supported shapes are: {"type":"line","title":"...","y":[1,2,3]}, {"type":"bar","title":"...","labels":["A","B"],"values":[1,2]}, {"type":"matrix","values":[[1,2],[3,4]]}, {"type":"vector","values":[1,2,3]}, and {"type":"equation","latex":"E = mc^2"}.
+  - For self-contained HTML/CSS/JS demos, include a fenced html block so the chat can offer Code and sandboxed Live Preview tabs. Never put secrets, external credentials, or unsafe instructions in previews.
+  - Keep the explanatory text useful and let the visual block stand on its own; do not emit malformed JSON.`;
 
   return `${persona}
 
+
 ${mode}
 
-${web}
+  ${web}
 
-TOOLS: get_time, calculate, recall_memories, store_memory, search_web, open_url, system_info.
+  ${visuals}
+
+  TOOLS: get_time, calculate, recall_memories, store_memory, search_web, open_url, system_info.
 
 Current time: ${new Date().toString()}
 
