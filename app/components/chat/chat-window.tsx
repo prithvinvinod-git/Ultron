@@ -448,10 +448,31 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
     ? transcript
         .filter((m) => m.role === "assistant" && !m.error)
         .flatMap((m) => [
-          ...(m.toolSteps ?? []).map((step) => ({
-            id: `${m.id}-${step.toolCallId}`,
-            text: `${step.state === "running" ? "Calling" : "Called"} ${step.name.replace(/_/g, " ")}${step.state === "error" ? " — failed" : ""}`,
-          })),
+          ...(m.toolSteps ?? []).flatMap((step) => {
+            const toolName = step.name.replace(/_/g, " ");
+            const status =
+              step.state === "running"
+                ? "Working"
+                : step.state === "error"
+                  ? "Failed"
+                  : "Completed";
+            const detail = step.error ?? step.result?.replace(/\s+/g, " ").trim();
+
+            return [
+              {
+                id: `${m.id}-${step.toolCallId}`,
+                text: `${status}: ${toolName}`,
+              },
+              ...(detail
+                ? [
+                    {
+                      id: `${m.id}-${step.toolCallId}-detail`,
+                      text: detail.length > 160 ? `${detail.slice(0, 160)}…` : detail,
+                    },
+                  ]
+                : []),
+            ];
+          }),
           ...(m.text.trim() ? [{ id: m.id, text: m.text }] : []),
         ])
     : [];
