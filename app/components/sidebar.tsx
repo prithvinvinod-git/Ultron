@@ -179,7 +179,7 @@ export function Sidebar({
           <img
             src="/ultron-logo.png"
             alt="Ultron logo"
-            className="h-10 w-10 shrink-0 object-contain"
+            className="h-8 w-8 shrink-0 object-contain"
           />
           {!collapsed && (
             <div className="leading-tight">
@@ -335,7 +335,7 @@ export function Sidebar({
           <img
             src="/ultron-logo.png"
             alt="Ultron logo"
-            className="h-10 w-10 shrink-0 rounded-2xl object-contain"
+            className="h-8 w-8 shrink-0 rounded-2xl object-contain"
           />
           <div className="leading-tight">
             <div className="text-[15px] font-semibold tracking-tight text-ink">
