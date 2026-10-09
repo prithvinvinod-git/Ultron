@@ -1,5 +1,6 @@
 import { publishEspResponse } from '@/ai/esp/broadcast';
 import { runAgent } from "@/ai/agent";
+import { getConfiguredProviders } from "@/ai/providers";
 import { tryStore } from "@/db/store";
 import { randomUUID } from "node:crypto";
 import { SSE_HEADERS, jsonError, sseEncode } from "@/lib/http";
@@ -11,6 +12,48 @@ export const dynamic = "force-dynamic";
 function truncate(text: string, max = 48): string {
   const clean = text.replace(/\s+/g, " ").trim();
   return clean.length > max ? `${clean.slice(0, max)}…` : clean;
+}
+
+async function generateSessionTitle(
+  userMessage: string,
+  assistantMessage: string,
+  preferredProvider?: string,
+): Promise<string | null> {
+  const providers = await getConfiguredProviders();
+  const ordered = preferredProvider
+    ? [
+        ...providers.filter((provider) => provider.config.name === preferredProvider),
+        ...providers.filter((provider) => provider.config.name !== preferredProvider),
+      ]
+    : providers;
+
+  for (const provider of ordered) {
+    try {
+      const completion = await provider.complete(
+        [
+          {
+            role: "system",
+            content:
+              "Create a concise conversation title from the exchange. Return only the title, with no quotes, punctuation at the end, or explanation. Use 3 to 6 words and capture the topic rather than copying the user's sentence.",
+          },
+          {
+            role: "user",
+            content: `User: ${userMessage.slice(0, 1200)}\\nAssistant: ${assistantMessage.slice(0, 1800)}`,
+          },
+        ],
+        { model: provider.config.defaultModel, temperature: 0.2, maxTokens: 20 },
+      );
+      const title = completion.content
+        ?.replace(/^['"“”]+|['"“”]+$/g, "")
+        .replace(/[.!?]+$/, "")
+        .replace(/\\s+/g, " ")
+        .trim();
+      if (title) return truncate(title, 72);
+    } catch {
+      // A title is optional; the completed chat should never fail because of it.
+    }
+  }
+  return null;
 }
 
 export async function POST(request: Request) {
@@ -100,6 +143,15 @@ export async function POST(request: Request) {
       } finally {
         if (finalContent !== null) {
           try { publishEspResponse(finalContent, sessionId); } catch (e) {}
+          const generatedTitle =
+            isNewSession && lastUser?.content
+              ? await generateSessionTitle(
+                  lastUser.content,
+                  finalContent,
+                  body.provider,
+                )
+              : null;
+
           await tryStore(async (store) => {
             await store.insertMessage({
               id: randomUUID(),
@@ -111,9 +163,7 @@ export async function POST(request: Request) {
             });
             await store.touchSession(sessionId, {
               title: isNewSession
-                ? truncate(
-                    finalContent || (lastUser?.content ?? "New conversation"),
-                  )
+                ? generatedTitle ?? truncate(lastUser?.content ?? "New conversation")
                 : undefined,
             });
           }, undefined);

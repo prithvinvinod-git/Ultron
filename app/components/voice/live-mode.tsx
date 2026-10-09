@@ -117,8 +117,8 @@ export function LiveMode({
                   className={cn(
                     "leading-snug tracking-tight",
                     isLast
-                      ? "text-3xl font-semibold text-ink"
-                      : "text-xl text-graphite",
+                      ? "text-2xl font-semibold text-ink"
+                      : "text-lg text-graphite",
                   )}
                 >
                   {c.text}

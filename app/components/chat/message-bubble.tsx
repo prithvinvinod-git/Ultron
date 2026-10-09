@@ -49,14 +49,6 @@ export function MessageBubble({
 
   return (
     <div className="animate-rise flex w-full gap-3 font-sans text-[13px]">
-      {!isUser && (
-        <img
-          src="/ultron-logo.png"
-          alt="Ultron"
-          className="mt-1 h-7 w-7 shrink-0 rounded-xl object-contain"
-        />
-      )}
-
       <div className={cn("flex min-w-0 max-w-full flex-col gap-1", isUser && "ml-auto")}>
         {message.error && (
           <div className="flex items-center gap-2 rounded-xl border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">
