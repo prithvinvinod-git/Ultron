@@ -446,8 +446,14 @@ function ChatRoom({ initialSessionId }: { initialSessionId: string | null }) {
   // live (and auto-scroll) as the assistant streams its replies.
   const liveCaptions = live
     ? transcript
-        .filter((m) => m.role === "assistant" && m.text.trim() && !m.error)
-        .map((m) => ({ id: m.id, text: m.text }))
+        .filter((m) => m.role === "assistant" && !m.error)
+        .flatMap((m) => [
+          ...(m.toolSteps ?? []).map((step) => ({
+            id: `${m.id}-${step.toolCallId}`,
+            text: `${step.state === "running" ? "Calling" : "Called"} ${step.name.replace(/_/g, " ")}${step.state === "error" ? " — failed" : ""}`,
+          })),
+          ...(m.text.trim() ? [{ id: m.id, text: m.text }] : []),
+        ])
     : [];
 
   return (
