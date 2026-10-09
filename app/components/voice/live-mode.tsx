@@ -96,12 +96,12 @@ export function LiveMode({
         </button>
       </div>
 
-      {/* Teleprompter captions — the assistant's output, shown large and auto-scrolling */}
+      {/* Teleprompter captions — assistant output and tool activity, auto-scrolling */}
       <div
         ref={scrollRef}
         className="w-full max-w-3xl flex-1 min-h-0 overflow-y-auto scroll-smooth px-2 pb-2"
       >
-        <div className="flex flex-col gap-6 py-2">
+        <div className="flex flex-col gap-4 py-2">
           {captions.length === 0 ? (
             <p className="pt-6 text-center text-lg text-mist">
               {speaking
@@ -117,8 +117,8 @@ export function LiveMode({
                   className={cn(
                     "leading-snug tracking-tight",
                     isLast
-                      ? "text-2xl font-semibold text-ink"
-                      : "text-lg text-graphite",
+                      ? "text-lg font-semibold text-ink"
+                      : "text-sm text-graphite",
                   )}
                 >
                   {c.text}
