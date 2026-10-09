@@ -66,10 +66,6 @@ export async function GET() {
   return Response.json({ configured: Boolean(process.env.XAI_API_KEY || process.env.OPENAI_API_KEY) });
 }
 
-function jsonError(status: number, message: string) {
-  return Response.json({ error: message }, { status });
-}
-
 export const preferredRegion = "auto";
 export const fetchCache = "force-no-store";
 export type ImageRouteResponse = { url: string; prompt: string; model: string; provider: string };
