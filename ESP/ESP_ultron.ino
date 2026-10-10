@@ -580,8 +580,44 @@ private:
   int _panOffset;
   int _tiltOffset;
 
-  static const int PAN_RANGE  = 40;
-  static const int TILT_RANGE = 30;
+  // AUTO self-test: chains the real emotion motions on a timer so the AUTO path
+  // can be proven without waiting for a chat reply. It borrows AUTO even when
+  // the stick is in MANUAL, then hands ownership back exactly as it found it.
+  bool _selfTest;
+  bool _selfTestPrevAuto;
+  uint32_t _selfTestNext;
+  uint8_t _selfTestStep;
+
+  static const char* selfTestMotion(uint8_t i) {
+    static const char* names[] = {
+      "nod", "excited", "look_left", "look_right", "thinking", "center"
+    };
+    return names[i % 6];
+  }
+
+static const int PAN_RANGE  = 40;
+static const int TILT_RANGE = 30;
+
+  // How far the head actually swings. One servo with a ±70 deg budget (centre 90,
+  // effective travel 20-160) but the keyframe tables below were written at ±8-25
+  // degrees, so the robot barely moved and read as faulty. MOTION_GAIN scales
+  // every table offset in one place instead of rewriting a dozen tables, and
+  // SERVO_MAX_SWING caps a single swing so a joystick-panned base angle still has
+  // room to travel before clampAngle() flattens it against a limit.
+#if defined(__cplusplus) && __cplusplus >= 201103L
+  static constexpr float MOTION_GAIN = 2.0f;
+  static constexpr int SERVO_MAX_SWING = 55;
+#else
+  #define MOTION_GAIN 2.0f
+  #define SERVO_MAX_SWING 55
+#endif
+
+  static int scaledOffset(int offset) {
+    long v = (long)((float)offset * 2.0f);
+    if (v >  55) v =  55;
+    if (v < -55) v = -55;
+    return (int)v;
+  }
 
 public:
   void begin() {
@@ -602,6 +638,10 @@ public:
     _nextIdleMove = millis() + 6000;
     _panOffset = 0;
     _tiltOffset = 0;
+    _selfTest = false;
+    _selfTestPrevAuto = true;
+    _selfTestNext = 0;
+    _selfTestStep = 0;
 #if !SERVO_USE_MOSFET
     // The supply is always live, so attach and centre straight away. Otherwise
     // the horn would sit at the SG90's mechanical rest position until the first
@@ -626,6 +666,17 @@ public:
 
   void setAutoMode(bool on) {
     if (_autoMode != on) toggleAutoMode();
+  }
+
+  void runAutoSelfTest() {
+    _selfTestPrevAuto = _autoMode;
+    _selfTest = true;
+    _selfTestStep = 0;
+    _selfTestNext = millis();
+    // Borrow AUTO so playMotion()'s ownership check does not swallow every
+    // motion; ownership is restored when the run finishes.
+    if (!_autoMode) setAutoMode(true);
+    Serial.println("[SERVO] AUTO self-test: start");
   }
 
   int clampAngle(int angle) const {
@@ -684,6 +735,25 @@ public:
   void moveDirect(int targetAngle, uint16_t durationMs = 400) {
     targetAngle = clampAngle(targetAngle);
     if (targetAngle == _currentAngle && !_animating) return;
+
+    // Throttled trace. Without this there is no way to tell "the firmware never
+    // asked for a move" apart from "it asked and the servo ignored it", which
+    // is the whole question when the head is not moving.
+    {
+      static uint32_t lastTrace = 0;
+      uint32_t t = millis();
+      if (t - lastTrace > 400) {
+        lastTrace = t;
+        Serial.print("[SERVO] ");
+        Serial.print(_currentAngle);
+        Serial.print(" -> ");
+        Serial.print(targetAngle);
+        Serial.print(" in ");
+        Serial.print(durationMs);
+        Serial.print("ms  auto=");
+        Serial.println(_autoMode ? 1 : 0);
+      }
+    }
 
     enablePower(true);
     _startAngle = _currentAngle;
@@ -784,7 +854,8 @@ public:
     _sequenceLen = len;
     _sequenceIdx = 0;
     if (len > 0) {
-      moveDirect(baseAngle() + _currentSequence[0].offset, _currentSequence[0].duration);
+      moveDirect(baseAngle() + scaledOffset(_currentSequence[0].offset),
+                 _currentSequence[0].duration);
     }
   }
 
@@ -802,7 +873,8 @@ public:
         // Check if keyframe sequence has next step
         if (_currentSequence != NULL && _sequenceIdx + 1 < _sequenceLen) {
           _sequenceIdx++;
-          moveDirect(baseAngle() + _currentSequence[_sequenceIdx].offset, _currentSequence[_sequenceIdx].duration);
+          moveDirect(baseAngle() + scaledOffset(_currentSequence[_sequenceIdx].offset),
+                     _currentSequence[_sequenceIdx].duration);
         } else {
           _currentSequence = NULL;
         }
@@ -823,14 +895,46 @@ public:
       }
 #endif
 
+      // AUTO self-test runs first so the idle drift cannot interleave with it.
+      if (_selfTest && (int32_t)(now - _selfTestNext) >= 0) {
+        if (_selfTestStep >= 6) {
+          _selfTest = false;
+          _autoMode = _selfTestPrevAuto;
+          _nextIdleMove = now + 6000;
+          Serial.print("[SERVO] AUTO self-test: done, mode=");
+          Serial.println(_autoMode ? "AUTO" : "MANUAL");
+        } else {
+          Serial.print("[SERVO] self-test motion: ");
+          Serial.println(selfTestMotion(_selfTestStep));
+          playMotionAny(selfTestMotion(_selfTestStep));
+          _selfTestStep++;
+          _selfTestNext = now + 2300;
+        }
+      }
+
       // Idle drift: in AUTO mode a long silence would leave the head frozen,
-      // which reads as broken hardware. Every few seconds nudge it a little.
-      if (_autoMode && _currentSequence == NULL &&
+      // which reads as broken hardware.
+      //
+      // The old list was {-9, 0, +10, +4, -6, 0}. Two of those six entries are
+      // zero, and moveDirect() returns early when the target already matches, so
+      // one drift step in three did nothing at all. What was left was a set of
+      // 4-10 degree hops with a flat hold between each one, which reads as a
+      // twitch every 7-11s rather than a robot that is quietly alive.
+      //
+      // Now it wanders further, never asks for a zero-length step, and varies
+      // how long it lingers at each stop.
+      if (_autoMode && !_selfTest && _currentSequence == NULL &&
           (int32_t)(now - _nextIdleMove) >= 0) {
-        static const int8_t drift[] = {-9, 0, 10, 4, -6, 0};
-        moveDirect(baseAngle() + drift[_idleStep % (sizeof(drift) / sizeof(drift[0]))], 900);
+        static const int8_t drift[] = {-16, -7, 5, 15, 9, -3, -13, 4};
+        static const uint16_t dwell[] = {1200, 850, 950, 1150, 800, 1100, 900, 1000};
+        const uint8_t n = (uint8_t)(sizeof(drift) / sizeof(drift[0]));
+        const uint8_t i = (uint8_t)(_idleStep % n);
+        moveDirect(baseAngle() + drift[i], dwell[i]);
         _idleStep++;
-        _nextIdleMove = now + (uint32_t)7000 + ((uint32_t)(_idleStep * 137) % 4000);
+        // Pause longer between drifts so the head reads as thinking rather than
+        // scanning back and forth.
+        _nextIdleMove = now + (uint32_t)dwell[i] + 6000 +
+                        ((uint32_t)(_idleStep * 271) % 3500);
       }
     }
   }
@@ -1615,7 +1719,17 @@ public:
   void handleEventsJson(const char* json) {
     AJDOC(res);
     DeserializationError err = deserializeJson(res, json);
-    if (err || !res["ok"].as<bool>()) return;
+    if (err) {
+      // The previous parser fed headers plus a stray "{" to this function, so
+      // this is where every silently-dropped web reply used to land.
+      Serial.print("[EVENTS] parse failed: ");
+      Serial.println(err.c_str());
+      return;
+    }
+    if (!res["ok"].as<bool>()) {
+      Serial.println("[EVENTS] server reported not-ok");
+      return;
+    }
 
     if (res.containsKey("latest_id")) {
       _lastEventId = res["latest_id"].as<uint32_t>();
@@ -1628,6 +1742,14 @@ public:
       const char* emo = ev["emotion"];
       const char* mot = ev["motion"];
       const char* ttsUrl = ev["tts"];
+
+      Serial.print("[EVENTS] id=");
+      Serial.print((unsigned long)res["latest_id"].as<uint32_t>());
+      Serial.print(" emotion=");
+      Serial.print(emo ? emo : "-");
+      Serial.print(" motion=");
+      Serial.print(mot && strlen(mot) > 0 ? mot : "-");
+      Serial.println(servoMgr.isAutoMode() ? "  [auto]" : "  [MANUAL - motion suppressed]");
 
       if (txt) logMessage("Chrome Chat:", txt);
       if (emo) applyStateString(emo);
@@ -2029,10 +2151,11 @@ public:
     } else if (_currentScreen == SCN_SERVO) {
       if (_menuIdx == 0) _mode = MODE_JOYSTICK_SERVO;
       else if (_menuIdx == 1) servoMgr.playMotionForced("nod");
-      else if (_menuIdx == 2) startValueEdit("Center Angle", &settings.servoCenter, 30, 150);
-      else if (_menuIdx == 3) startValueEdit("Min Angle", &settings.servoMin, SERVO_HARD_MIN, 80);
-      else if (_menuIdx == 4) startValueEdit("Max Angle", &settings.servoMax, 100, SERVO_HARD_MAX);
-      else if (_menuIdx == 5) _currentScreen = SCN_MAIN;
+      else if (_menuIdx == 2) servoMgr.runAutoSelfTest();
+      else if (_menuIdx == 3) startValueEdit("Center Angle", &settings.servoCenter, 30, 150);
+      else if (_menuIdx == 4) startValueEdit("Min Angle", &settings.servoMin, SERVO_HARD_MIN, 80);
+      else if (_menuIdx == 5) startValueEdit("Max Angle", &settings.servoMax, 100, SERVO_HARD_MAX);
+      else if (_menuIdx == 6) _currentScreen = SCN_MAIN;
     } else if (_currentScreen == SCN_AUDIO) {
       if (_menuIdx == 0) startValueEdit("Volume (0-21)", &settings.volume, 0, 21);
       else if (_menuIdx == 1) audioMgr.playSound(SND_OK);
@@ -2116,11 +2239,12 @@ public:
       } else if (_currentScreen == SCN_SERVO) {
         items[0] = "1. Manual Control";
         items[1] = "2. Test Nod";
-        items[2] = "3. Set Center";
-        items[3] = "4. Set Min Angle";
-        items[4] = "5. Set Max Angle";
-        items[5] = "< Back";
-        count = 6;
+        items[2] = "3. Test Auto Motion";
+        items[3] = "4. Set Center";
+        items[4] = "5. Set Min Angle";
+        items[5] = "6. Set Max Angle";
+        items[6] = "< Back";
+        count = 7;
       } else if (_currentScreen == SCN_AUDIO) {
         items[0] = "1. Volume";
         items[1] = "2. Test Beep";
