@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 
 import { readSettings, writeSettings } from "@/lib/settings";
+import { getSttProvider } from "@/lib/stt";
 
 export interface UseVoiceOptions {
   /** Live draft text, streamed while the user speaks. */
@@ -560,11 +561,11 @@ export function useVoice({ onTranscript, onFinalize, onError }: UseVoiceOptions)
     sessionRef.current = true;
     setListening(true);
 
-    // Prefer the browser Web Speech API so transcription works without a
-    // server round-trip (no GROQ_API_KEY needed).
-    if (startWebSpeech()) return;
+    // Respect the shared provider setting. Groq always uses completed recorder
+    // clips; Browser uses native recognition when the browser supports it.
+    if (getSttProvider(readSettings().sttProvider) === "browser" && startWebSpeech()) return;
 
-    // Browsers without SpeechRecognition fall back to recording + server ASR.
+    // Groq and browsers without SpeechRecognition use recording + server ASR.
     await beginFallback();
   }, [listening, stopSpeaking, startWebSpeech, beginFallback]);
 
