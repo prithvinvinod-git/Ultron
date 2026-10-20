@@ -170,14 +170,11 @@ export default function SettingsPage() {
               key={provider}
               type="button"
               onClick={() => update({ sttProvider: provider })}
-              className={`flex w-full items-start justify-between gap-4 rounded-xl border px-4 py-3 text-left transition-colors ${settings.sttProvider === provider ? "border-brand-bright bg-brand-bright/10" : "border-[#2A2C31] hover:bg-white/[0.03]"}`}
+              className={`flex w-full items-center justify-between gap-4 rounded-xl border px-4 py-3 text-left transition-colors ${settings.sttProvider === provider ? "border-brand-bright bg-brand-bright/10" : "border-[#2A2C31] hover:bg-white/[0.03]"}`}
               aria-pressed={settings.sttProvider === provider}
             >
-              <span>
-                <span className="block text-sm font-medium text-[#D1D5DB]">{STT_PROVIDER_INFO[provider].label}</span>
-                <span className="mt-1 block text-xs leading-relaxed text-[#8b8d95]">{STT_PROVIDER_INFO[provider].description}</span>
-              </span>
-              <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${settings.sttProvider === provider ? "bg-brand-bright" : "bg-[#3A3D44]"}`} aria-hidden="true" />
+              <span className="text-sm font-medium text-[#D1D5DB]">{STT_PROVIDER_INFO[provider].label}</span>
+              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${settings.sttProvider === provider ? "bg-brand-bright" : "bg-[#3A3D44]"}`} aria-hidden="true" />
             </button>
           ))}
         </div>
