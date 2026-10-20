@@ -10,6 +10,7 @@ import {
   type AppSettings,
 } from "@/lib/settings";
 import { useIsClient } from "@/lib/use-is-client";
+import { STT_PROVIDER_INFO, STT_PROVIDERS, type SttProvider } from "@/lib/stt";
 
 interface CatalogProvider {
   name: string;
@@ -157,6 +158,30 @@ export default function SettingsPage() {
         <p className="mt-2 text-xs text-[#8b8d95]">
           This only changes what the Live mode button uses. Normal chat and push-to-talk TTS stay unchanged.
         </p>
+      </section>
+
+      <section className="mb-8">
+        <h2 className="mb-3 text-xs font-semibold tracking-wide uppercase text-[#8b8d95]">
+          Speech Recognition (STT)
+        </h2>
+        <div className="space-y-2" role="group" aria-label="Speech recognition provider">
+          {STT_PROVIDERS.map((provider: SttProvider) => (
+            <button
+              key={provider}
+              type="button"
+              onClick={() => update({ sttProvider: provider })}
+              className={`flex w-full items-start justify-between gap-4 rounded-xl border px-4 py-3 text-left transition-colors ${settings.sttProvider === provider ? "border-brand-bright bg-brand-bright/10" : "border-[#2A2C31] hover:bg-white/[0.03]"}`}
+              aria-pressed={settings.sttProvider === provider}
+            >
+              <span>
+                <span className="block text-sm font-medium text-[#D1D5DB]">{STT_PROVIDER_INFO[provider].label}</span>
+                <span className="mt-1 block text-xs leading-relaxed text-[#8b8d95]">{STT_PROVIDER_INFO[provider].description}</span>
+              </span>
+              <span className={`mt-1 h-2.5 w-2.5 shrink-0 rounded-full ${settings.sttProvider === provider ? "bg-brand-bright" : "bg-[#3A3D44]"}`} aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-[#8b8d95]">Groq audio is sent to the server for transcription; the API key is never exposed in this app. If Groq is unavailable, switch explicitly to Browser SpeechRecognition.</p>
       </section>
 
       <section className="mb-8">

@@ -8,6 +8,8 @@ import {
   longWaitLine,
 } from "@/lib/activity";
 import type { ActivityKind } from "@/ai/types";
+import { readSettings } from "@/lib/settings";
+import { getSttProvider } from "@/lib/stt";
 
 export type LiveStatus = "idle" | "listening" | "thinking" | "speaking";
 
@@ -538,8 +540,9 @@ export function useLiveSession({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ audio: b64, mimeType: mime }),
       });
-      const data = (await res.json()) as { ok?: boolean; text?: string };
+      const data = (await res.json()) as { ok?: boolean; text?: string; error?: string };
       const text = data.ok ? (data.text ?? "").trim() : "";
+      if (!res.ok && data.error) onErrorRef.current?.(data.error);
       if (!text) return;
       if (statusRef.current !== "idle" && statusRef.current !== "listening") {
         handleInterruption(text);
@@ -686,7 +689,7 @@ export function useLiveSession({
       return;
     }
 
-    if (getNativeRecognition()) startRecognition();
+    if (getSttProvider(readSettings().sttProvider) === "browser" && getNativeRecognition()) startRecognition();
     else void startFallback();
   }, [elevenLabsAgent, setStatusSafe, startRecognition, startFallback]);
 

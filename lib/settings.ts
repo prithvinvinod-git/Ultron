@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { DEFAULT_STT_PROVIDER, getSttProvider, type SttProvider } from "@/lib/stt";
 
 /**
  * Shared, tab-persisted preferences.
@@ -29,6 +30,8 @@ export interface AppSettings {
   speakReplies: boolean;
   /** Preferred provider; "" lets the agent choose. */
   provider: string;
+  /** Speech-to-text provider shared by typing and live mode. */
+  sttProvider: SttProvider;
   /** Preferred model within that provider; "" uses the provider default. */
   model: string;
   /** Require an explicit send gesture before a spoken turn is submitted. */
@@ -42,6 +45,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   voiceKey: "aria",
   speakReplies: true,
   provider: "",
+  sttProvider: DEFAULT_STT_PROVIDER,
   model: "",
   confirmVoice: false,
 };
@@ -55,7 +59,8 @@ function parsePersisted(): Partial<Persisted> {
     const raw = window.localStorage.getItem(SETTINGS_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Partial<Persisted>;
-    return parsed && typeof parsed === "object" ? parsed : {};
+    if (!parsed || typeof parsed !== "object") return {};
+    return { ...parsed, sttProvider: getSttProvider(parsed.sttProvider) };
   } catch {
     return {};
   }

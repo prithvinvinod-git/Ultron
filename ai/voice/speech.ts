@@ -360,15 +360,31 @@ const ASR_PROMPT =
  * Returns null when GROQ_API_KEY is not set — the browser's Web Speech API
  * is used as the free client-side fallback instead.
  */
+export type TranscriptionErrorCode = "not_configured" | "invalid_audio" | "too_large" | "rate_limited" | "quota_exhausted" | "upstream";
+
+export class TranscriptionError extends Error {
+  constructor(public readonly code: TranscriptionErrorCode, message: string) {
+    super(message);
+    this.name = "TranscriptionError";
+  }
+}
+
+const MAX_ASR_BYTES = 25 * 1024 * 1024;
+const SUPPORTED_ASR_TYPES = new Set(["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav", "audio/x-wav"]);
+
 export async function transcribeSpeech(audio: Buffer, mimeType = "audio/webm") {
-  if (!process.env.GROQ_API_KEY) return null;
+  if (!process.env.GROQ_API_KEY) throw new TranscriptionError("not_configured", "Groq Whisper is not configured on the server.");
+  if (!audio.length) throw new TranscriptionError("invalid_audio", "The captured audio was empty.");
+  if (audio.length > MAX_ASR_BYTES) throw new TranscriptionError("too_large", "Audio is too large to transcribe.");
+  const normalizedMime = mimeType.split(";")[0].toLowerCase();
+  if (!SUPPORTED_ASR_TYPES.has(normalizedMime)) throw new TranscriptionError("invalid_audio", "This audio format is not supported by Groq Whisper.");
 
   const form = new FormData();
   const bytes = new Uint8Array(audio);
   form.append(
     "file",
-    new File([bytes], "voice.webm", { type: mimeType }),
-    "voice.webm",
+    new File([bytes], `voice.${normalizedMime === "audio/mp4" ? "mp4" : normalizedMime === "audio/ogg" ? "ogg" : normalizedMime === "audio/wav" || normalizedMime === "audio/x-wav" ? "wav" : normalizedMime === "audio/mpeg" ? "mp3" : "webm"}`, { type: normalizedMime }),
+    `voice.${normalizedMime === "audio/mp4" ? "mp4" : normalizedMime === "audio/ogg" ? "ogg" : normalizedMime === "audio/wav" || normalizedMime === "audio/x-wav" ? "wav" : normalizedMime === "audio/mpeg" ? "mp3" : "webm"}`,
   );
   form.append("model", "whisper-large-v3");
   form.append("language", "en");
@@ -383,10 +399,14 @@ export async function transcribeSpeech(audio: Buffer, mimeType = "audio/webm") {
     method: "POST",
     headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
     body: form,
-  });
-  if (!res.ok) return null;
+    signal: AbortSignal.timeout(30000),
+  }).catch(() => { throw new TranscriptionError("upstream", "Groq Whisper could not be reached."); });
+  if (res.status === 429) throw new TranscriptionError("rate_limited", "Groq Whisper is rate-limited. Try again or choose Browser SpeechRecognition.");
+  if (res.status === 401 || res.status === 403) throw new TranscriptionError("not_configured", "Groq Whisper configuration was rejected by the server.");
+  if (res.status === 413) throw new TranscriptionError("too_large", "Audio is too large for Groq Whisper.");
+  if (!res.ok) throw new TranscriptionError("upstream", "Groq Whisper could not transcribe this audio.");
   const data = (await res.json()) as { text?: string };
-  return { text: data.text ?? "" };
+  return { text: typeof data.text === "string" ? data.text : "" };
 }
 
 export function voiceEnginesConfigured(): {
